@@ -1,0 +1,6 @@
+{
+  "name": "FOREX",
+  "description": "A React web application for cryptocurrency and financial market analysis using Technical Analysis, Smart Money Concepts (SMC), Inner Circle Trader (ICT) methodologies, and AI-powered sentiment and trend predictions via Gemini API. Features interactive charts and detailed analysis reports.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

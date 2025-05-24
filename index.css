@@ -1,0 +1,6 @@
+pre {
+  border: 1px solid light-dark(#444, #aaa);
+  padding: 1em;
+  overflow: auto;
+  border-radius: 8px;
+}

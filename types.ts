@@ -9,8 +9,9 @@ export interface Candle {
 }
 
 export interface TechnicalIndicators {
-  emaShort?: number[]; // EMA 9 (or configurable short period)
-  emaLong?: number[];  // EMA 21 (or configurable long period)
+  emaShort?: number[]; 
+  emaLong?: number[];  
+  emaTrend?: number[]; // Kept for contextual trend information
   rsi?: number[];
   macdLine?: number[];
   macdSignal?: number[];
@@ -22,7 +23,7 @@ export interface TechnicalIndicators {
   stochK?: number[];
   stochD?: number[];
   volumeSma?: number[];
-  engulfing?: number[]; // 100 para alta, -100 para baixa, 0 para nenhum
+  engulfing?: number[]; // 100 bullish engulf, -100 bearish engulf, 150 hammer, -150 shooting star, 0 none
 }
 
 export interface FVG {
@@ -64,15 +65,70 @@ export interface TradeSignal {
   confidenceScore?: SignalConfidence;
 }
 
+export interface BacktestTrade {
+  assetId: string;
+  signalCandleDate: string; 
+  signalType: 'COMPRA' | 'VENDA'; 
+  entryDate: string;
+  entryPrice: number;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  exitDate?: string;
+  exitPrice?: number;
+  result: 'WIN' | 'LOSS' | 'OPEN' | 'NO_TRIGGER' | 'IGNORED'; 
+  pnlPoints?: number;
+  pnlPercentage?: number; 
+  // Simplified reasonForExit
+  reasonForExit?: 'TP_HIT' | 'SL_HIT' | 'END_OF_BACKTEST_PERIOD' | 'INSUFFICIENT_CAPITAL' | 'FILTERED_INTERNAL' | 'NO_CLEAR_SETUP';
+  durationCandles?: number;
+  pnlBRL?: number; 
+  capitalBeforeTrade?: number; 
+  capitalAfterTrade?: number; 
+}
+
+export interface StrategyBacktestResult {
+  assetId: string;
+  periodDays: number;
+  startDate: string; 
+  endDate: string;   
+  
+  initialCapitalBRL: number;
+  riskPerTradeBRL: number;
+  finalCapitalBRL: number;
+  totalPnlBRL: number;
+  percentageReturn: number; 
+
+  totalTradesAttempted: number; 
+  totalTradesExecuted: number; 
+  totalTradesIgnored: number; 
+  winningTrades: number;
+  losingTrades: number;
+  winRateExecuted: number; 
+  
+  totalPnlPoints: number; 
+  averageWinPoints?: number;
+  averageLossPoints?: number;
+  profitFactor?: number; 
+  
+  peakCapitalBRL: number; 
+  maxDrawdownBRL: number; 
+  maxDrawdownPercentage: number; 
+
+  trades: BacktestTrade[];
+  summaryMessage: string;
+  error?: string; 
+}
+
+
 export interface AnalysisReport {
   asset: string;
   lastCandle: Candle | null;
-  technicalIndicators: Partial<TechnicalIndicators>; // Snapshot of last values
+  technicalIndicators: Partial<TechnicalIndicators>; 
   smcAnalysis: SmcAnalysis;
   finalSignal: TradeSignal;
-  fullHistory?: Candle[]; // Full historical data used for analysis
-  fullIndicators?: TechnicalIndicators; // All calculated indicator series
-  backtestResult?: string | null;
+  fullHistory?: Candle[]; 
+  fullIndicators?: TechnicalIndicators; 
+  strategyBacktestResult?: StrategyBacktestResult | null;
 }
 
 export enum AssetType {
@@ -88,6 +144,7 @@ export interface Asset {
 export interface ChartDatapoint extends Candle {
   emaShort?: number;
   emaLong?: number;
+  emaTrend?: number; // Kept for chart display
   rsi?: number;
   macdLine?: number;
   macdSignal?: number;

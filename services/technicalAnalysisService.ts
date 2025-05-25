@@ -1,10 +1,12 @@
 
 import { Candle, TechnicalIndicators } from '../types';
 import {
-  EMA_SHORT_PERIOD, EMA_LONG_PERIOD, RSI_PERIOD,
+  EMA_SHORT_PERIOD, EMA_LONG_PERIOD, EMA_TREND_PERIOD, RSI_PERIOD,
   MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD,
   BBANDS_PERIOD, BBANDS_STDDEV, ATR_PERIOD,
-  STOCH_K_PERIOD, STOCH_D_PERIOD, STOCH_SMOOTH_K, VOLUME_SMA_PERIOD
+  STOCH_K_PERIOD, STOCH_D_PERIOD, STOCH_SMOOTH_K, VOLUME_SMA_PERIOD,
+  REVERSAL_CANDLE_WICK_BODY_RATIO, REVERSAL_CANDLE_MAX_OTHER_WICK_RATIO,
+  PATTERN_BULLISH_ENGULFING, PATTERN_BEARISH_ENGULFING, PATTERN_HAMMER, PATTERN_SHOOTING_STAR
 } from '../constants';
 
 const calculateSMA = (data: number[], period: number): (number | undefined)[] => {
@@ -43,12 +45,10 @@ const calculateEMA = (data: number[], period: number): (number | undefined)[] =>
   for (let i = period; i < data.length; i++) {
     const prevEma = ema[i-1];
     if(prevEma === undefined) {
-        // This should ideally not happen if initial SMA was calculated correctly and data is sequential.
-        // Fallback: attempt to recalculate SMA for current point if possible or push undefined.
         let tempSum = 0;
         let count = 0;
         for(let k = Math.max(0, i - period + 1); k <= i; k++){
-            if(data[k] !== undefined) { // Ensure data[k] itself is valid
+            if(data[k] !== undefined) { 
                 tempSum += data[k];
                 count++;
             }
@@ -57,7 +57,6 @@ const calculateEMA = (data: number[], period: number): (number | undefined)[] =>
         else ema.push(undefined);
         continue;
     }
-    // data[i] should be a number here. If it can be undefined, handle it.
     const currentEma = (data[i] - prevEma) * multiplier + prevEma;
     ema.push(currentEma);
   }
@@ -78,7 +77,7 @@ const calculateRSI = (data: number[], period: number): (number | undefined)[] =>
   avgGain /= period;
   avgLoss /= period;
 
-  const firstRS = avgLoss === 0 ? 100 : avgGain / avgLoss; // Prevent division by zero; if loss is 0, RSI is 100
+  const firstRS = avgLoss === 0 ? 100 : avgGain / avgLoss; 
   rsi.push(100 - (100 / (1 + firstRS)));
 
   for (let i = period + 1; i < data.length; i++) {
@@ -92,7 +91,7 @@ const calculateRSI = (data: number[], period: number): (number | undefined)[] =>
     avgLoss = (avgLoss * (period - 1) + currentLoss) / period;
 
     const currentRS = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    if(avgLoss === 0 && avgGain === 0 && rsi[i-1] !== undefined) rsi.push(rsi[i-1] as number); // If no change, RSI stays same
+    if(avgLoss === 0 && avgGain === 0 && rsi[i-1] !== undefined) rsi.push(rsi[i-1] as number); 
     else rsi.push(100 - (100 / (1 + currentRS)));
   }
   return rsi;
@@ -114,10 +113,8 @@ const calculateMACD = (
   });
 
   const validMacdValues = macdLine.filter(v => v !== undefined) as number[];
-  // Pass only the defined MACD values to EMA for signal line calculation
   let signalLineSegment = calculateEMA(validMacdValues, signalPeriod);
 
-  // Align signalLineSegment with the original macdLine's undefined gaps
   const alignedSignalLine: (number | undefined)[] = Array(data.length).fill(undefined);
   let macdIndex = 0;
   for(let i = 0; i < macdLine.length; i++) {
@@ -166,13 +163,9 @@ const calculateATR = (candles: Candle[], period: number): (number | undefined)[]
 
   const trValues: number[] = [];
   if (candles.length === 0) return [];
-  // First TR is simply High - Low for the first candle if we don't have a previous close.
-  // For a more standard ATR, you'd ideally start calculation from the second candle if C[i-1] is needed for first TR.
-  // However, many libraries initialize first TR as H-L.
   if (candles.length > 0) {
       trValues.push(candles[0].high - candles[0].low);
   }
-
 
   for (let i = 1; i < candles.length; i++) {
     const tr1 = candles[i].high - candles[i].low;
@@ -181,11 +174,8 @@ const calculateATR = (candles: Candle[], period: number): (number | undefined)[]
     trValues.push(Math.max(tr1, tr2, tr3));
   }
 
-  // ATR is typically a smoothed moving average (like EMA or Wilder's) of TR values.
-  // Using SMA here for simplicity, can be replaced with EMA for standard ATR.
-  const atr = calculateSMA(trValues, period); // Or use calculateEMA(trValues, period) for a more standard ATR.
+  const atr = calculateSMA(trValues, period); 
 
-  // Align atr to candle length by prepending undefined if trValues start later or are shorter
   const alignedAtr: (number | undefined)[] = Array(candles.length).fill(undefined);
   const atrOffset = candles.length - atr.length;
   for(let i=0; i<atr.length; i++){
@@ -193,13 +183,7 @@ const calculateATR = (candles: Candle[], period: number): (number | undefined)[]
           alignedAtr[atrOffset + i] = atr[i];
       }
   }
-  // If using SMA for ATR, it will already have (period-1) undefined values at the start of trValues.
-  // We need to align this with the candles array.
-  // The first (period-1) TR values will not have an SMA.
-  // So the ATR array should start with (period-1) undefineds, relative to trValues start.
-  // If trValues itself starts from candles[0], then ATR will start from candles[period-1].
-
-  return atr; // Or use calculateEMA(trValues, period)
+  return alignedAtr; 
 };
 
 const calculateStochastic = (candles: Candle[], kPeriod: number, dPeriod: number, smoothK: number):
@@ -218,46 +202,41 @@ const calculateStochastic = (candles: Candle[], kPeriod: number, dPeriod: number
             periodHigh = Math.max(periodHigh, candles[j].high);
         }
         if (periodHigh === periodLow) {
-            // If high and low are the same, %K is often taken as previous %K or 50.
             percentKRaw.push(percentKRaw[i-1] !== undefined ? percentKRaw[i-1] : 50);
         } else {
             percentKRaw.push(((candles[i].close - periodLow) / (periodHigh - periodLow)) * 100);
         }
     }
 
-    const stochK = calculateSMA(percentKRaw.filter(v => v !== undefined) as number[], smoothK);
-     // Align stochK to original candle length
+    const stochKIntermediate = calculateSMA(percentKRaw.filter(v => v !== undefined) as number[], smoothK);
     const alignedStochK: (number|undefined)[] = Array(candles.length).fill(undefined);
     let kIdx = 0;
     for(let i = 0; i < percentKRaw.length; i++) {
         if(percentKRaw[i] !== undefined) {
-            if(kIdx < stochK.length) {
-                alignedStochK[i] = stochK[kIdx];
+            if(kIdx < stochKIntermediate.length) {
+                alignedStochK[i] = stochKIntermediate[kIdx];
             }
             kIdx++;
         }
     }
 
-
-    const stochD = calculateSMA(alignedStochK.filter(v => v !== undefined) as number[], dPeriod);
-    // Align stochD to original candle length
+    const stochDIntermediate = calculateSMA(alignedStochK.filter(v => v !== undefined) as number[], dPeriod);
     const alignedStochD: (number|undefined)[] = Array(candles.length).fill(undefined);
     let dIdx = 0;
     for(let i = 0; i < alignedStochK.length; i++) {
         if(alignedStochK[i] !== undefined) {
-            if(dIdx < stochD.length) {
-                alignedStochD[i] = stochD[dIdx];
+            if(dIdx < stochDIntermediate.length) {
+                alignedStochD[i] = stochDIntermediate[dIdx];
             }
             dIdx++;
         }
     }
-
     return { stochK: alignedStochK, stochD: alignedStochD };
 };
 
-const calculateEngulfing = (candles: Candle[]): number[] => {
-    const engulfing: number[] = Array(candles.length).fill(0);
-    if (candles.length < 2) return engulfing;
+const calculateCandlestickPatterns = (candles: Candle[]): number[] => {
+    const patterns: number[] = Array(candles.length).fill(0);
+    if (candles.length < 2) return patterns;
 
     for (let i = 1; i < candles.length; i++) {
         const prev = candles[i-1];
@@ -267,21 +246,40 @@ const calculateEngulfing = (candles: Candle[]): number[] => {
         const prevBodyHigh = Math.max(prev.open, prev.close);
         const currBodyLow = Math.min(curr.open, curr.close);
         const currBodyHigh = Math.max(curr.open, curr.close);
+        const currBodySize = Math.abs(curr.open - curr.close);
+        const currUpperWick = curr.high - currBodyHigh;
+        const currLowerWick = currBodyLow - curr.low;
 
-        // Bullish Engulfing: Current green candle engulfs previous red candle's body
-        if (curr.close > curr.open && prev.close < prev.open) { // Current is bullish, previous is bearish
-            if (currBodyHigh > prevBodyHigh && currBodyLow < prevBodyLow) {
-                engulfing[i] = 100;
+        // Bullish Engulfing
+        if (curr.close > curr.open && prev.close < prev.open && 
+            currBodyHigh > prevBodyHigh && currBodyLow < prevBodyLow) {
+            patterns[i] = PATTERN_BULLISH_ENGULFING;
+        }
+        // Bearish Engulfing
+        else if (curr.close < curr.open && prev.close > prev.open && 
+                 currBodyHigh > prevBodyHigh && currBodyLow < prevBodyLow) {
+            patterns[i] = PATTERN_BEARISH_ENGULFING;
+        }
+
+        // Hammer (after a downtrend - simplified check: prev candle was bearish)
+        // Small body, long lower wick, short upper wick
+        if (currBodySize > 0 && prev.close < prev.open) { // Current has body, prev was bearish
+            if (currLowerWick >= currBodySize * REVERSAL_CANDLE_WICK_BODY_RATIO &&
+                currUpperWick <= currBodySize * REVERSAL_CANDLE_MAX_OTHER_WICK_RATIO) {
+                 patterns[i] = PATTERN_HAMMER;
             }
         }
-        // Bearish Engulfing: Current red candle engulfs previous green candle's body
-        else if (curr.close < curr.open && prev.close > prev.open) { // Current is bearish, previous is bullish
-            if (currBodyHigh > prevBodyHigh && currBodyLow < prevBodyLow) {
-                engulfing[i] = -100;
+
+        // Shooting Star (after an uptrend - simplified check: prev candle was bullish)
+        // Small body, long upper wick, short lower wick
+        if (currBodySize > 0 && prev.close > prev.open) { // Current has body, prev was bullish
+             if (currUpperWick >= currBodySize * REVERSAL_CANDLE_WICK_BODY_RATIO &&
+                 currLowerWick <= currBodySize * REVERSAL_CANDLE_MAX_OTHER_WICK_RATIO) {
+                 patterns[i] = PATTERN_SHOOTING_STAR;
             }
         }
     }
-    return engulfing;
+    return patterns;
 };
 
 
@@ -296,6 +294,7 @@ export const calculateAllIndicators = (candles: Candle[]): TechnicalIndicators =
   return {
     emaShort: calculateEMA(closes, EMA_SHORT_PERIOD),
     emaLong: calculateEMA(closes, EMA_LONG_PERIOD),
+    emaTrend: calculateEMA(closes, EMA_TREND_PERIOD), // Added EMA Trend
     rsi: calculateRSI(closes, RSI_PERIOD),
     macdLine,
     macdSignal,
@@ -307,6 +306,6 @@ export const calculateAllIndicators = (candles: Candle[]): TechnicalIndicators =
     stochK,
     stochD,
     volumeSma: calculateSMA(volumes, VOLUME_SMA_PERIOD),
-    engulfing: calculateEngulfing(candles),
+    engulfing: calculateCandlestickPatterns(candles), // Enhanced to include Hammer/Shooting Star
   };
 };

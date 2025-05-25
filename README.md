@@ -7,9 +7,15 @@ This contains everything you need to run your app locally.
 
 **Prerequisites:** Node.js
 
+
 1. Install dependencies:
    `npm install`
-2. Run the app:
+2. Create a `.env` file in the project root (Vite will automatically load it). Add your Gemini API key to this file:
+   \`\`\`env
+   GEMINI_API_KEY=your_gemini_api_key
+   \`\`\`
+   Replace \`your_gemini_api_key\` with your actual API key.
+3. Run the app:
    `npm run dev`
 
-The application uses financial market data and technical analysis to provide insights. The AI-driven features previously using Gemini API have been replaced with local simulations.
+The application will then use the Gemini API for AI-powered analysis features.

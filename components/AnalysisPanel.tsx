@@ -1,15 +1,17 @@
 
 import React from 'react';
-import { AnalysisReport, Candle, FVG, SwingPoint, TradeSignalType, TechnicalIndicators } from '../types';
+import { AnalysisReport, Candle, FVG, SwingPoint, TradeSignalType, TechnicalIndicators, StrategyBacktestResult } from '../types';
 import { ArrowDownIcon, ArrowUpIcon, MinusSmallIcon, SparklesIcon, DownloadIcon } from './icons';
-import { EMA_SHORT_PERIOD, EMA_LONG_PERIOD } from '../constants';
-import { generatePdfReport } from '../services/pdfGenerator'; 
+import { EMA_SHORT_PERIOD, EMA_LONG_PERIOD, EMA_TREND_PERIOD } from '../constants';
+import { generatePdfReport, generateBacktestPdfReport } from '../services/pdfGenerator'; 
 import { formatPrice as utilFormatPrice } from '../utils/formatters';
 
 
 interface AnalysisPanelProps {
   report: AnalysisReport | null;
-  isLoading?: boolean; 
+  isLoading?: boolean;
+  isScanning?: boolean; 
+  isPerformingBacktest?: boolean; 
 }
 
 const SignalIcon: React.FC<{ type: TradeSignalType }> = ({ type }) => {
@@ -29,6 +31,11 @@ const SignalIcon: React.FC<{ type: TradeSignalType }> = ({ type }) => {
 
 const formatPrice = (price?: number, assetName?: string) => {
     return utilFormatPrice(price, assetName);
+}
+
+const formatBRL = (value?: number) => {
+    if (value === undefined || value === null) return 'N/D';
+    return `R$ ${value.toFixed(2).replace('.', ',')}`;
 }
 
 const Section: React.FC<{ title: string; children: React.ReactNode; className?: string }> = ({ title, children, className }) => (
@@ -65,13 +72,19 @@ const renderTA = (ta: Partial<TechnicalIndicators>, assetName?: string) => {
     const lastMACDHist = Array.isArray(ta.macdHist) && ta.macdHist.length > 0 ? ta.macdHist[0] : undefined;
     const lastEMAShort = Array.isArray(ta.emaShort) && ta.emaShort.length > 0 ? ta.emaShort[0] : undefined;
     const lastEMALong = Array.isArray(ta.emaLong) && ta.emaLong.length > 0 ? ta.emaLong[0] : undefined;
+    const lastEMATrend = Array.isArray(ta.emaTrend) && ta.emaTrend.length > 0 ? ta.emaTrend[0] : undefined;
 
     return (
         <>
             <KeyValue label={`MME Curta (${EMA_SHORT_PERIOD})`} value={formatPrice(lastEMAShort, assetName)} />
             <KeyValue label={`MME Longa (${EMA_LONG_PERIOD})`} value={formatPrice(lastEMALong, assetName)} />
+            <KeyValue label={`MME Tendência (${EMA_TREND_PERIOD})`} value={formatPrice(lastEMATrend, assetName)} />
             <KeyValue label="IFR (RSI)" value={lastRSI?.toFixed(2)} />
             <KeyValue label="MACD Histograma" value={formatPrice(lastMACDHist, assetName)} />
+             {ta.engulfing?.[0] === 150 && <KeyValue label="Padrão Vela Recente" value="Martelo (Alta)" valueClassName="text-success"/>}
+             {ta.engulfing?.[0] === -150 && <KeyValue label="Padrão Vela Recente" value="Estrela Cadente (Baixa)" valueClassName="text-danger"/>}
+             {ta.engulfing?.[0] === 100 && <KeyValue label="Padrão Vela Recente" value="Engolfo de Alta" valueClassName="text-success"/>}
+             {ta.engulfing?.[0] === -100 && <KeyValue label="Padrão Vela Recente" value="Engolfo de Baixa" valueClassName="text-danger"/>}
         </>
     );
 };
@@ -90,8 +103,38 @@ const renderSMC = (smc: AnalysisReport['smcAnalysis'], assetName?: string) => (
     </>
 );
 
+const renderStrategyBacktestResult = (result: StrategyBacktestResult, assetName?: string) => (
+    <>
+        <KeyValue label="Período Testado" value={`${result.periodDays} dias`} />
+        <KeyValue label="Data Início Teste" value={new Date(result.startDate).toLocaleDateString('pt-BR')} />
+        <KeyValue label="Data Fim Teste" value={new Date(result.endDate).toLocaleDateString('pt-BR')} />
+        <hr className="my-2 border-gray-300 dark:border-gray-600" />
+        <KeyValue label="Capital Inicial" value={formatBRL(result.initialCapitalBRL)} />
+        <KeyValue label="Risco por Trade" value={formatBRL(result.riskPerTradeBRL)} />
+        <KeyValue label="Capital Final" value={formatBRL(result.finalCapitalBRL)} valueClassName={result.finalCapitalBRL > result.initialCapitalBRL ? 'text-success font-bold' : result.finalCapitalBRL < result.initialCapitalBRL ? 'text-danger font-bold' : 'font-bold'}/>
+        <KeyValue label="Resultado Total (BRL)" value={formatBRL(result.totalPnlBRL)} valueClassName={result.totalPnlBRL > 0 ? 'text-success font-semibold' : result.totalPnlBRL < 0 ? 'text-danger font-semibold' : 'font-semibold'} />
+        <KeyValue label="Retorno sobre Capital" value={`${result.percentageReturn.toFixed(2)}%`} valueClassName={result.percentageReturn > 0 ? 'text-success' : result.percentageReturn < 0 ? 'text-danger' : ''} />
+         <KeyValue label="Pico de Capital (BRL)" value={formatBRL(result.peakCapitalBRL)} />
+        <KeyValue label="Max Drawdown (BRL)" value={formatBRL(result.maxDrawdownBRL)} valueClassName="text-danger" />
+        <KeyValue label="Max Drawdown (%)" value={`${result.maxDrawdownPercentage.toFixed(2)}%`} valueClassName="text-danger" />
+        <hr className="my-2 border-gray-300 dark:border-gray-600" />
+        <KeyValue label="Total Sinais Gerados" value={result.totalTradesAttempted} />
+        <KeyValue label="Total Trades Ignorados" value={result.totalTradesIgnored} />
+        <KeyValue label="Total Trades Executados" value={result.totalTradesExecuted} />
+        <KeyValue label="Trades Vencedores" value={result.winningTrades} valueClassName="text-success" />
+        <KeyValue label="Trades Perdedores" value={result.losingTrades} valueClassName="text-danger" />
+        <KeyValue label="Taxa de Acerto (Exec.)" value={result.winRateExecuted.toFixed(1)} unit="%" />
+        <KeyValue label="Total PnL (Pontos)" value={result.totalPnlPoints.toFixed(assetName?.toUpperCase().includes("BTC") ? 2 : 4)} valueClassName={result.totalPnlPoints > 0 ? 'text-success' : result.totalPnlPoints < 0 ? 'text-danger' : ''} />
+        {result.profitFactor !== undefined && <KeyValue label="Fator de Lucro (Pontos)" value={result.profitFactor.toFixed(2)} />}
+        {result.averageWinPoints !== undefined && <KeyValue label="Média Ganho (Pontos)" value={result.averageWinPoints.toFixed(assetName?.toUpperCase().includes("BTC") ? 2 : 4)} />}
+        {result.averageLossPoints !== undefined && <KeyValue label="Média Perda (Pontos)" value={Math.abs(result.averageLossPoints).toFixed(assetName?.toUpperCase().includes("BTC") ? 2 : 4)} />}
+         {result.summaryMessage && <p className="text-xs sm:text-sm mt-2 whitespace-pre-wrap text-text_secondary-light dark:text-text_secondary-dark">{result.summaryMessage}</p>}
+         {result.error && <p className="text-xs text-danger mt-1">{result.error}</p>}
+    </>
+);
 
-const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading }) => {
+
+const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScanning, isPerformingBacktest }) => {
   if (!report) {
     return (
       <div className="bg-surface-light dark:bg-surface-dark p-6 text-center text-text_secondary-light dark:text-text_secondary-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600 h-full flex items-center justify-center">
@@ -100,7 +143,7 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading }) => {
     );
   }
 
-  const { asset, lastCandle, technicalIndicators, smcAnalysis, finalSignal, backtestResult } = report;
+  const { asset, lastCandle, technicalIndicators, smcAnalysis, finalSignal, strategyBacktestResult } = report;
 
   const displaySignalType = (type: TradeSignalType) => {
     return type.replace(/_/g, ' ').replace('FORTE', '(FORTE)');
@@ -122,16 +165,22 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading }) => {
 
   const isStrongSignal = finalSignal.type === 'COMPRA_FORTE' || finalSignal.type === 'VENDA_FORTE';
 
-  const handleDownloadPdf = () => {
+  const handleDownloadSingleAnalysisPdf = () => {
     if (report) {
       generatePdfReport(report);
+    }
+  };
+
+  const handleDownloadBacktestPdf = () => {
+    if (report && strategyBacktestResult && strategyBacktestResult.trades.length > 0) {
+      generateBacktestPdfReport(strategyBacktestResult, report.asset);
     }
   };
 
 
   return (
     <div className="bg-surface-light dark:bg-surface-dark p-2 sm:p-4 space-y-4 h-full overflow-y-auto text-text_primary-light dark:text-text_primary-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600">
-      <h2 className="text-xl sm:text-2xl font-bold text-center text-primary dark:text-primary-light mb-3">Análise para {asset} (Estratégia MME Crossover)</h2>
+      <h2 className="text-xl sm:text-2xl font-bold text-center text-primary dark:text-primary-light mb-3">Análise para {asset} (Estratégia M15 Avançada)</h2>
 
       <Section title="Sinal Final Consolidado" className="!bg-opacity-50 dark:!bg-opacity-50">
         <div className={`p-3 rounded-md text-center font-semibold text-lg ${signalBgColor} ${signalTextColor}`}>
@@ -142,23 +191,31 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading }) => {
         )}
         <p className="text-xs sm:text-sm mt-2 whitespace-pre-wrap text-text_secondary-light dark:text_secondary-dark">{finalSignal.justification}</p>
         
-        {isStrongSignal && ( // PDF download can be always available or based on 'isStrongSignal' as per preference
+        {(isStrongSignal || finalSignal.type !== 'NEUTRO') && finalSignal.type !== 'ERRO' && (
             <button
-                onClick={handleDownloadPdf}
-                disabled={isLoading}
+                onClick={handleDownloadSingleAnalysisPdf}
+                disabled={isLoading || isScanning || isPerformingBacktest}
                 className="mt-3 w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 text-sm"
-                title="Baixar Relatório em PDF"
+                title="Baixar Relatório de Análise Individual em PDF"
             >
                 <DownloadIcon className="w-4 h-4" />
-                <span>Baixar Relatório PDF</span>
+                <span>Baixar Relatório da Análise</span>
             </button>
         )}
 
         {finalSignal.details.length > 0 && (
             <div className="mt-2">
-                <p className="text-xs font-semibold text-text_primary-light dark:text-text_primary-dark">Detalhes da Estratégia:</p>
-                <ul className="list-disc list-inside text-xs text-text_secondary-light dark:text-text_secondary-dark">
-                    {finalSignal.details.map((detail, i) => <li key={i}>{detail}</li>)}
+                <p className="text-xs font-semibold text-text_primary-light dark:text-text_primary-dark">Fatores de Contexto / Detalhes da Estratégia:</p>
+                <ul className="list-disc list-inside text-xs text-text_secondary-light dark:text-text_secondary-dark space-y-0.5">
+                    {finalSignal.details.map((detail, i) => {
+                        const isContext = detail.toLowerCase().startsWith('contexto ');
+                        let itemStyle = {};
+                        if (isContext && detail.includes('ALTA')) itemStyle = { color: 'var(--tw-color-success)'}; 
+                        if (isContext && detail.includes('BAIXA') && detail.includes('Liquidez')) itemStyle = { color: 'var(--tw-color-warning)'}; 
+                        if (detail.toLowerCase().startsWith('filtro:') || detail.toLowerCase().includes('ignorado')) itemStyle = {color: 'var(--tw-color-danger)'};
+                        
+                        return <li key={i} style={itemStyle}>{detail}</li>;
+                    })}
                 </ul>
             </div>
         )}
@@ -172,9 +229,20 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading }) => {
         )}
       </Section>
 
-      {backtestResult && (
-        <Section title="Resultado do Backtest (Sinal Simulado)">
-            <p className="text-xs sm:text-sm whitespace-pre-wrap text-text_secondary-light dark:text-text_secondary-dark">{backtestResult}</p>
+      {strategyBacktestResult && (
+        <Section title={`Backtest da Estratégia (${strategyBacktestResult.periodDays} Dias)`}>
+            {renderStrategyBacktestResult(strategyBacktestResult, asset)}
+            {strategyBacktestResult.trades && strategyBacktestResult.trades.length > 0 && (
+                 <button
+                    onClick={handleDownloadBacktestPdf}
+                    disabled={isLoading || isScanning || isPerformingBacktest}
+                    className="mt-4 w-full px-4 py-2 bg-indigo-500 hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 text-sm"
+                    title="Baixar Relatório Detalhado de Backtest em PDF"
+                >
+                    <DownloadIcon className="w-4 h-4" />
+                    <span>Baixar PDF do Backtest Detalhado</span>
+                </button>
+            )}
         </Section>
       )}
 

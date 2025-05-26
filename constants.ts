@@ -56,7 +56,7 @@ export const NUM_CANDLES_TO_DISPLAY = 150;
 export const VOLUME_SPIKE_RATIO = 1.8; 
 
 // Configurações de Backtest de Estratégia
-export const BACKTEST_PERIOD_DAYS = 30; 
+export const BACKTEST_PERIOD_DAYS = 365; // Changed from 30 to 365
 export const BACKTEST_CANDLES_PER_DAY = (24 * 60) / CANDLE_DURATION_MINUTES; 
 export const BACKTEST_TOTAL_CANDLES_FOR_PERIOD = BACKTEST_PERIOD_DAYS * BACKTEST_CANDLES_PER_DAY;
 // Buffer needs to be large enough for all lookbacks: MS lookback + IDM lookback + any indicator like EMA50

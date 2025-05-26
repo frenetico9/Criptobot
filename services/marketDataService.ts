@@ -3,36 +3,29 @@ import { Candle, AssetType } from '../types';
 import { CANDLE_DURATION_MINUTES, MASTER_ASSET_LIST, BINANCE_MAX_KLINE_LIMIT_PER_REQUEST, NUM_CANDLES_TO_FETCH } from '../constants';
 
 const assetToBinanceSymbolMap: Record<string, string> = {
-  'BTC-USD': 'BTCUSDT',
-  'ETH-USD': 'ETHUSDT',
-  'SOL-USD': 'SOLUSDT',
-  'ADA-USD': 'ADAUSDT',
-  'XRP-USD': 'XRPUSDT',
-  'DOT-USD': 'DOTUSDT',
+  // Kept Assets
   'DOGE-USD': 'DOGEUSDT',
-  'AVAX-USD': 'AVAXUSDT',
-  'LINK-USD': 'LINKUSDT',
-  'MATIC-USD': 'MATICUSDT',
-  'LTC-USD': 'LTCUSDT',
-  'SHIB-USD': 'SHIBUSDT',
-  'TRX-USD': 'TRXUSDT',
-  'UNI-USD': 'UNIUSDT',
-  'BCH-USD': 'BCHUSDT',
-  'XLM-USD': 'XLMUSDT',
   'NEAR-USD': 'NEARUSDT',
-  'FIL-USD': 'FILUSDT',
-  'ICP-USD': 'ICPUSDT',
-  'APT-USD': 'APTUSDT',
-  'ARB-USD': 'ARBUSDT',
-  'OP-USD': 'OPUSDT',
-  'TON-USD': 'TONUSDT',
-  'ATOM-USD': 'ATOMUSDT',
-  'ETC-USD': 'ETCUSDT',
-  'VET-USD': 'VETUSDT',
-  'HBAR-USD': 'HBARUSDT',
   'ALGO-USD': 'ALGOUSDT',
-  'XTZ-USD': 'XTZUSDT',
+  'XRP-USD': 'XRPUSDT',
+  'ATOM-USD': 'ATOMUSDT',
   'SAND-USD': 'SANDUSDT',
+  'ADA-USD': 'ADAUSDT',
+  'ICP-USD': 'ICPUSDT',
+  // Added Memecoins
+  'SHIB-USD': 'SHIBUSDT',
+  'PEPE-USD': 'PEPEUSDT',
+  'WIF-USD': 'WIFUSDT',
+  'BONK-USD': 'BONKUSDT',
+  'FLOKI-USD': 'FLOKIUSDT',
+  'MEME-USD': 'MEMEUSDT',
+  'BOME-USD': 'BOMEUSDT',
+  'TURBO-USD': 'TURBOUSDT',
+  'COQ-USD': 'COQUSDT',
+  'MYRO-USD': 'MYROUSDT',
+  // Removed assets (examples, ensure all not in the new MASTER_ASSET_LIST are removed)
+  // 'BTC-USD': 'BTCUSDT', (Example of a removed asset)
+  // 'ETH-USD': 'ETHUSDT', (Example of a removed asset)
 };
 
 const mapAssetIdToBinanceSymbol = (assetId: string): string | null => {

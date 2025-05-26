@@ -88,39 +88,29 @@ export const GEMINI_TEXT_MODEL = 'gemini-2.5-flash-preview-04-17';
 
 
 export const MASTER_ASSET_LIST: Asset[] = [
-    { id: 'BTC-USD', name: 'Bitcoin (BTC/USD)', type: AssetType.CRYPTO },
-    { id: 'ETH-USD', name: 'Ethereum (ETH/USD)', type: AssetType.CRYPTO },
-    { id: 'SOL-USD', name: 'Solana (SOL/USD)', type: AssetType.CRYPTO },
-    { id: 'ADA-USD', name: 'Cardano (ADA/USD)', type: AssetType.CRYPTO },
-    { id: 'XRP-USD', name: 'Ripple (XRP/USD)', type: AssetType.CRYPTO },
-    { id: 'DOT-USD', name: 'Polkadot (DOT/USD)', type: AssetType.CRYPTO },
+    // Kept Assets
     { id: 'DOGE-USD', name: 'Dogecoin (DOGE/USD)', type: AssetType.CRYPTO },
-    { id: 'AVAX-USD', name: 'Avalanche (AVAX/USD)', type: AssetType.CRYPTO },
-    { id: 'LINK-USD', name: 'Chainlink (LINK/USD)', type: AssetType.CRYPTO },
-    { id: 'MATIC-USD', name: 'Polygon (MATIC/USD)', type: AssetType.CRYPTO },
-    { id: 'LTC-USD', name: 'Litecoin (LTC/USD)', type: AssetType.CRYPTO },
-    { id: 'SHIB-USD', name: 'Shiba Inu (SHIB/USD)', type: AssetType.CRYPTO },
-    { id: 'TRX-USD', name: 'TRON (TRX/USD)', type: AssetType.CRYPTO },
-    { id: 'UNI-USD', name: 'Uniswap (UNI/USD)', type: AssetType.CRYPTO },
-    { id: 'BCH-USD', name: 'Bitcoin Cash (BCH/USD)', type: AssetType.CRYPTO },
-    { id: 'XLM-USD', name: 'Stellar (XLM/USD)', type: AssetType.CRYPTO },
     { id: 'NEAR-USD', name: 'Near Protocol (NEAR/USD)', type: AssetType.CRYPTO },
-    { id: 'FIL-USD', name: 'Filecoin (FIL/USD)', type: AssetType.CRYPTO },
-    { id: 'ICP-USD', name: 'Internet Computer (ICP/USD)', type: AssetType.CRYPTO },
-    { id: 'APT-USD', name: 'Aptos (APT/USD)', type: AssetType.CRYPTO },
-    { id: 'ARB-USD', name: 'Arbitrum (ARB/USD)', type: AssetType.CRYPTO },
-    { id: 'OP-USD', name: 'Optimism (OP/USD)', type: AssetType.CRYPTO },
-    { id: 'TON-USD', name: 'Toncoin (TON/USD)', type: AssetType.CRYPTO },
-    { id: 'ATOM-USD', name: 'Cosmos (ATOM/USD)', type: AssetType.CRYPTO },
-    { id: 'ETC-USD', name: 'Ethereum Classic (ETC/USD)', type: AssetType.CRYPTO },
-    { id: 'VET-USD', name: 'VeChain (VET/USD)', type: AssetType.CRYPTO },
-    { id: 'HBAR-USD', name: 'Hedera (HBAR/USD)', type: AssetType.CRYPTO },
     { id: 'ALGO-USD', name: 'Algorand (ALGO/USD)', type: AssetType.CRYPTO },
-    { id: 'XTZ-USD', name: 'Tezos (XTZ/USD)', type: AssetType.CRYPTO },
+    { id: 'XRP-USD', name: 'Ripple (XRP/USD)', type: AssetType.CRYPTO },
+    { id: 'ATOM-USD', name: 'Cosmos (ATOM/USD)', type: AssetType.CRYPTO },
     { id: 'SAND-USD', name: 'The Sandbox (SAND/USD)', type: AssetType.CRYPTO },
+    { id: 'ADA-USD', name: 'Cardano (ADA/USD)', type: AssetType.CRYPTO },
+    { id: 'ICP-USD', name: 'Internet Computer (ICP/USD)', type: AssetType.CRYPTO },
+    // Added Memecoins
+    { id: 'SHIB-USD', name: 'Shiba Inu (SHIB/USD)', type: AssetType.CRYPTO },
+    { id: 'PEPE-USD', name: 'Pepe (PEPE/USD)', type: AssetType.CRYPTO },
+    { id: 'WIF-USD', name: 'dogwifhat (WIF/USD)', type: AssetType.CRYPTO },
+    { id: 'BONK-USD', name: 'Bonk (BONK/USD)', type: AssetType.CRYPTO },
+    { id: 'FLOKI-USD', name: 'Floki (FLOKI/USD)', type: AssetType.CRYPTO },
+    { id: 'MEME-USD', name: 'Memecoin (MEME/USD)', type: AssetType.CRYPTO },
+    { id: 'BOME-USD', name: 'Book of Meme (BOME/USD)', type: AssetType.CRYPTO },
+    { id: 'TURBO-USD', name: 'Turbo (TURBO/USD)', type: AssetType.CRYPTO },
+    { id: 'COQ-USD', name: 'Coq Inu (COQ/USD)', type: AssetType.CRYPTO },
+    { id: 'MYRO-USD', name: 'Myro (MYRO/USD)', type: AssetType.CRYPTO },
 ];
 
-export const DEFAULT_ASSET_ID = 'BTC-USD';
+export const DEFAULT_ASSET_ID = 'DOGE-USD'; // Updated default asset
 
 // Constants from old strategy that are less relevant or replaced by SMC logic
 // export const EMA_SHORT_PERIOD = 9; // Replaced by SMC POIs

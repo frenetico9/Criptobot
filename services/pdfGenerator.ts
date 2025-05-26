@@ -1,12 +1,12 @@
 
 import jsPDF from 'jspdf';
-import { AnalysisReport, StrategyBacktestResult, BacktestTrade, SmcAnalysis, MarketStructurePoint, FVG, OrderBlock, InducementPoint, KillzoneSession } from '../types'; 
+import { AnalysisReport, StrategyBacktestResult, BacktestTrade, SmcAnalysis, MarketStructurePoint, FVG, OrderBlock, InducementPoint, KillzoneSession } from '../types';
 import { formatPrice } from '../utils/formatters';
 import { EMA_TREND_PERIOD, SMC_STRATEGY_MIN_RR_RATIO, BACKTEST_PERIOD_DAYS } from '../constants';
 
 
-const FONT_FAMILY_SANS = 'Helvetica'; 
-const FONT_FAMILY_SERIF = 'Times-Roman'; 
+const FONT_FAMILY_SANS = 'Helvetica';
+const FONT_FAMILY_SERIF = 'Times-Roman';
 
 const FONT_STYLES = {
     REGULAR: 'normal',
@@ -15,21 +15,21 @@ const FONT_STYLES = {
 };
 
 const MARGIN = 15;
-const LINE_HEIGHT_NORMAL = 7; 
-const LINE_HEIGHT_SMALL = 6;  
+const LINE_HEIGHT_NORMAL = 7;
+const LINE_HEIGHT_SMALL = 6;
 const SECTION_SPACING = 8;
-const PAGE_WIDTH = 210; 
-const PAGE_HEIGHT = 297; 
+const PAGE_WIDTH = 210;
+const PAGE_HEIGHT = 297;
 const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
-let currentY = MARGIN; 
+let currentY = MARGIN;
 
 function resetY() {
     currentY = MARGIN;
 }
 
 function addPageIfNeeded(doc: jsPDF, spaceNeeded: number = LINE_HEIGHT_NORMAL * 2) {
-  if (currentY + spaceNeeded > PAGE_HEIGHT - MARGIN * 1.5) { 
+  if (currentY + spaceNeeded > PAGE_HEIGHT - MARGIN * 1.5) {
     doc.addPage();
     currentY = MARGIN;
   }
@@ -47,24 +47,24 @@ function addSectionTitle(doc: jsPDF, title: string, titleSize: number = 14, noTo
     addPageIfNeeded(doc, LINE_HEIGHT_NORMAL * 1.5 + (titleSize > 14 ? LINE_HEIGHT_NORMAL : 0) );
   }
   setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.BOLD, titleSize);
-  doc.setTextColor(40, 40, 40); 
+  doc.setTextColor(40, 40, 40);
   doc.text(title, MARGIN, currentY);
-  currentY += (LINE_HEIGHT_NORMAL * 0.8 * (titleSize/10)); 
-  doc.setDrawColor(200, 200, 200); 
+  currentY += (LINE_HEIGHT_NORMAL * 0.8 * (titleSize/10));
+  doc.setDrawColor(200, 200, 200);
   doc.setLineWidth(0.3);
   doc.line(MARGIN, currentY, MARGIN + CONTENT_WIDTH, currentY);
   currentY += (LINE_HEIGHT_NORMAL * 0.7 * (titleSize/10));
-  doc.setTextColor(0, 0, 0); 
+  doc.setTextColor(0, 0, 0);
 }
 
 function addKeyValue(doc: jsPDF, label: string, value: string | number | undefined, options: { valueColor?: string | [number, number, number], boldValue?: boolean, labelWidthFactor?: number, fontSize?: number } = {}) {
   const fontSize = options.fontSize || 10;
   const lineHeight = (fontSize / 10) * LINE_HEIGHT_NORMAL * 0.8;
-  
+
   addPageIfNeeded(doc, lineHeight);
   setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.REGULAR, fontSize);
-  doc.setTextColor(80, 80, 80); 
-  
+  doc.setTextColor(80, 80, 80);
+
   const labelText = label + ': ';
   const effectiveLabelWidthFactor = options.labelWidthFactor || 0.45; // Adjusted for potentially longer SMC labels
   const labelMaxWidth = CONTENT_WIDTH * effectiveLabelWidthFactor;
@@ -72,7 +72,7 @@ function addKeyValue(doc: jsPDF, label: string, value: string | number | undefin
 
   const labelLines = doc.splitTextToSize(labelText, labelMaxWidth);
   doc.text(labelLines, MARGIN, currentY);
-  
+
   const labelHeight = labelLines.length * lineHeight;
 
   if (options.boldValue) {
@@ -80,8 +80,8 @@ function addKeyValue(doc: jsPDF, label: string, value: string | number | undefin
   } else {
     setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.REGULAR, fontSize);
   }
-  
-  doc.setTextColor(0,0,0); 
+
+  doc.setTextColor(0,0,0);
   if (options.valueColor) {
     if (typeof options.valueColor === 'string') {
         const rgb = hexToRgb(options.valueColor);
@@ -94,32 +94,32 @@ function addKeyValue(doc: jsPDF, label: string, value: string | number | undefin
   const valueText = String(value ?? 'N/D');
   const valueLines = doc.splitTextToSize(valueText, valueMaxWidth);
   doc.text(valueLines, MARGIN + labelMaxWidth + 2, currentY);
-  
+
   const valueHeight = valueLines.length * lineHeight;
 
-  currentY += Math.max(labelHeight, valueHeight) + (fontSize / 10 * 2); 
+  currentY += Math.max(labelHeight, valueHeight) + (fontSize / 10 * 2);
   doc.setTextColor(0, 0, 0);
 }
 
 function addParagraph(doc: jsPDF, text: string | undefined, options: { isItalic?: boolean, fontSize?: number, color?: [number, number, number], family?: string, leftMargin?: number } = {}) {
   if (!text) return;
   const fontSize = options.fontSize || 10;
-  const lineHeight = (fontSize / 10) * LINE_HEIGHT_NORMAL * 0.8; 
+  const lineHeight = (fontSize / 10) * LINE_HEIGHT_NORMAL * 0.8;
   const actualLeftMargin = options.leftMargin || MARGIN;
   const paragraphWidth = CONTENT_WIDTH - (actualLeftMargin - MARGIN);
 
-  addPageIfNeeded(doc, lineHeight * 2); 
+  addPageIfNeeded(doc, lineHeight * 2);
 
   setDocFont(doc, options.family || FONT_FAMILY_SANS, options.isItalic ? FONT_STYLES.ITALIC : FONT_STYLES.REGULAR, fontSize);
   if(options.color) {
     doc.setTextColor(options.color[0], options.color[1], options.color[2]);
   } else {
-    doc.setTextColor(50,50,50); 
+    doc.setTextColor(50,50,50);
   }
-  
+
   const lines = doc.splitTextToSize(text, paragraphWidth);
   doc.text(lines, actualLeftMargin, currentY);
-  currentY += lines.length * lineHeight + (fontSize/10 * 2); 
+  currentY += lines.length * lineHeight + (fontSize/10 * 2);
   doc.setTextColor(0, 0, 0);
 }
 
@@ -133,8 +133,8 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 }
 
 const addDisclaimer = (doc: jsPDF) => {
-    addPageIfNeeded(doc, LINE_HEIGHT_SMALL * 10); 
-    if (PAGE_HEIGHT - currentY < LINE_HEIGHT_SMALL * 10 + MARGIN) { 
+    addPageIfNeeded(doc, LINE_HEIGHT_SMALL * 10);
+    if (PAGE_HEIGHT - currentY < LINE_HEIGHT_SMALL * 10 + MARGIN) {
         doc.addPage();
         currentY = MARGIN;
     } else {
@@ -164,12 +164,12 @@ export const generatePdfReport = (report: AnalysisReport) => {
   resetY();
 
   setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.BOLD, 18);
-  doc.setTextColor(20, 80, 160); 
-  doc.text('Relatório de Análise Técnica SMC/ICT', PAGE_WIDTH / 2, currentY, { align: 'center' }); 
+  doc.setTextColor(20, 80, 160);
+  doc.text('Relatório de Análise Técnica SMC/ICT', PAGE_WIDTH / 2, currentY, { align: 'center' });
   currentY += LINE_HEIGHT_NORMAL * 1.5;
 
   setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.REGULAR, 10);
-  doc.setTextColor(100, 100, 100); 
+  doc.setTextColor(100, 100, 100);
   doc.text(`Ativo: ${report.asset}`, MARGIN, currentY);
   const reportDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   doc.text(`Gerado em: ${reportDate}`, PAGE_WIDTH - MARGIN, currentY, { align: 'right' });
@@ -177,10 +177,10 @@ export const generatePdfReport = (report: AnalysisReport) => {
 
   // Main Signal Section
   addSectionTitle(doc, 'Sinal da Estratégia SMC/ICT');
-  let signalColorTuple: [number, number, number] = [0, 0, 0]; 
-  if (report.finalSignal.type.includes('COMPRA')) signalColorTuple = [16, 185, 129]; 
-  else if (report.finalSignal.type.includes('VENDA')) signalColorTuple = [239, 68, 68];  
-  else if (report.finalSignal.type === 'NEUTRO') signalColorTuple = [245, 158, 11]; 
+  let signalColorTuple: [number, number, number] = [0, 0, 0];
+  if (report.finalSignal.type.includes('COMPRA')) signalColorTuple = [16, 185, 129];
+  else if (report.finalSignal.type.includes('VENDA')) signalColorTuple = [239, 68, 68];
+  else if (report.finalSignal.type === 'NEUTRO') signalColorTuple = [245, 158, 11];
   else if (report.finalSignal.type === 'AGUARDANDO_ENTRADA') signalColorTuple = [59, 130, 246];
 
   addKeyValue(doc, 'Tipo de Sinal', report.finalSignal.type.replace(/_/g, ' '), { valueColor: signalColorTuple, boldValue: true });
@@ -189,7 +189,7 @@ export const generatePdfReport = (report: AnalysisReport) => {
     addKeyValue(doc, 'Killzone', report.finalSignal.killzone, { valueColor: (report.finalSignal.killzone === 'LONDON' ? [128,0,128] : [255,165,0])});
   }
   addParagraph(doc, `Justificativa Principal: ${report.finalSignal.justification}`);
-  
+
   if (report.finalSignal.details && report.finalSignal.details.length > 0) {
     currentY += LINE_HEIGHT_NORMAL * 0.3;
     setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.BOLD, 10);
@@ -200,7 +200,7 @@ export const generatePdfReport = (report: AnalysisReport) => {
     report.finalSignal.details.forEach(detail => {
         // Basic color coding for details, can be expanded
         let detailColor: [number, number, number] | undefined = undefined;
-        if (detail.toLowerCase().includes('killzone') && (detail.includes('LONDON') || detail.includes('NEWYORK'))) detailColor = [0, 100, 0]; 
+        if (detail.toLowerCase().includes('killzone') && (detail.includes('LONDON') || detail.includes('NEWYORK'))) detailColor = [0, 100, 0];
         if (detail.toLowerCase().includes('varrido ✓')) detailColor = [16, 185, 129];
         if (detail.toLowerCase().includes('aguardando x')) detailColor = [245, 158, 11];
         addParagraph(doc, `• ${detail}`, {fontSize: 9, color: detailColor, leftMargin: MARGIN + 3});
@@ -264,7 +264,7 @@ export const generatePdfReport = (report: AnalysisReport) => {
   addKeyValue(doc, `MME Tendência (${EMA_TREND_PERIOD})`, formatPrice(lastEMATrend, asset));
   addKeyValue(doc, 'IFR (RSI)', lastRSI?.toFixed(2));
   currentY += SECTION_SPACING;
-  
+
   addDisclaimer(doc);
 
   const filename = `Relatorio_SMC_ICT_${report.asset.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0,16).replace(/[:T]/g, '-')}.pdf`;
@@ -274,7 +274,7 @@ export const generatePdfReport = (report: AnalysisReport) => {
 const _addBacktestResultSummaryToDoc = (doc: jsPDF, result: StrategyBacktestResult, assetName: string, rrRatio: number) => {
     const startDateStr = result.startDate ? new Date(result.startDate).toLocaleDateString('pt-BR') : 'N/D';
     const endDateStr = result.endDate ? new Date(result.endDate).toLocaleDateString('pt-BR') : 'N/D';
-    
+
     setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.REGULAR, 10);
     doc.setTextColor(100, 100, 100);
     doc.text(`Ativo: ${assetName} | Período: ${result.periodDays} dias (${startDateStr} - ${endDateStr}) | RR Alvo: 1:${rrRatio.toFixed(1)}`, MARGIN, currentY);
@@ -300,7 +300,7 @@ const _addBacktestResultSummaryToDoc = (doc: jsPDF, result: StrategyBacktestResu
     addKeyValue(doc, 'Taxa de Acerto (Executados)', `${result.winRateExecuted.toFixed(1)}%`, {fontSize: 9});
     addKeyValue(doc, 'Total PnL (Pontos)', result.totalPnlPoints.toFixed(assetName.toUpperCase().includes("BTC") ? 2 : 4), {fontSize: 9});
     addKeyValue(doc, 'Fator de Lucro (Pontos)', result.profitFactor?.toFixed(2) || 'N/A', {fontSize: 9});
-      
+
     let summaryText = result.summaryMessage;
     if (!summaryText.includes("Nota: Estratégia SMC/ICT")) { // Add note if not present
         summaryText += `\nNota: Estratégia SMC/ICT aplicada com foco em Quebra de Estrutura, Inducement e entrada em POIs (FVG/OB). RR Alvo de 1:${rrRatio.toFixed(1)}.`;
@@ -308,7 +308,7 @@ const _addBacktestResultSummaryToDoc = (doc: jsPDF, result: StrategyBacktestResu
         summaryText = summaryText.replace(/RR Alvo de 1:\d+(\.\d+)?/g, `RR Alvo de 1:${rrRatio.toFixed(1)}`);
     }
     addParagraph(doc, `Sumário da Estratégia Aplicada: ${summaryText}`, {fontSize: 9, isItalic: true});
-  
+
     if (result.error) {
       addParagraph(doc, `Erro no Backtest: ${result.error}`, {fontSize: 9, color: [200,0,0]});
     }
@@ -318,22 +318,22 @@ const _addBacktestResultSummaryToDoc = (doc: jsPDF, result: StrategyBacktestResu
 const _addBacktestTradesTableToDoc = (doc: jsPDF, result: StrategyBacktestResult, assetName: string) => {
     const tableStartY = currentY;
     const cellPadding = 1;
-    const tableLineHeight = LINE_HEIGHT_SMALL * 1.2; 
+    const tableLineHeight = LINE_HEIGHT_SMALL * 1.2;
     const headerFontSize = 8;
     const cellFontSize = 7.5;
-  
+
     const colWidths = {
-      seq: 7, sinal: 12, inicioOp: 20, fimOp: 20, entrada: 14, sl: 14, tp: 14, saidaPx: 14, resultado: 12, pnlBRL: 15, motivo: 28 
-    }; 
-    
+      seq: 7, sinal: 12, inicioOp: 20, fimOp: 20, entrada: 14, sl: 14, tp: 14, saidaPx: 14, resultado: 12, pnlBRL: 15, motivo: 28
+    };
+
     const colHeaders = ["#", "Sinal", "Início", "Fim", "P.Entr", "P.SL", "P.TP", "P.Saída", "Res.", "PnL(BRL)", "Motivo"];
     const colKeys: (keyof BacktestTrade | 'seq')[] = ['seq', 'signalType', 'entryDate', 'exitDate', 'entryPrice', 'stopLossPrice', 'takeProfitPrice', 'exitPrice', 'result', 'pnlBRL', 'reasonForExit'];
-  
+
     addPageIfNeeded(doc, tableLineHeight * 2);
     setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.BOLD, headerFontSize);
-    doc.setFillColor(230, 230, 230); 
+    doc.setFillColor(230, 230, 230);
     doc.rect(MARGIN, currentY, CONTENT_WIDTH, tableLineHeight, 'F');
-    
+
     let currentX = MARGIN;
     for (let i = 0; i < colHeaders.length; i++) {
       const key = Object.keys(colWidths)[i] as keyof typeof colWidths;
@@ -341,26 +341,26 @@ const _addBacktestTradesTableToDoc = (doc: jsPDF, result: StrategyBacktestResult
       currentX += colWidths[key];
     }
     currentY += tableLineHeight;
-  
+
     setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.REGULAR, cellFontSize);
     result.trades.forEach((trade, index) => {
       addPageIfNeeded(doc, tableLineHeight);
       currentX = MARGIN;
-      
-      if (index % 2 === 1 && trade.result !== 'IGNORED' && trade.result !== 'NO_TRIGGER') { 
-        doc.setFillColor(245, 245, 245); 
+
+      if (index % 2 === 1 && trade.result !== 'IGNORED' && trade.result !== 'NO_TRIGGER') {
+        doc.setFillColor(245, 245, 245);
         doc.rect(MARGIN, currentY, CONTENT_WIDTH, tableLineHeight, 'F');
       } else if (trade.result === 'IGNORED' || trade.result === 'NO_TRIGGER') {
-        doc.setFillColor(250, 250, 210); 
+        doc.setFillColor(250, 250, 210);
         doc.rect(MARGIN, currentY, CONTENT_WIDTH, tableLineHeight, 'F');
       }
-  
+
       for (let i = 0; i < colKeys.length; i++) {
         const colKey = colKeys[i];
         const colDefKey = Object.keys(colWidths)[i] as keyof typeof colWidths;
         let cellValue = '';
         let cellColor: [number,number,number] | undefined = undefined;
-  
+
         if (colKey === 'seq') {
           cellValue = (index + 1).toString();
         } else if (colKey === 'entryDate' || colKey === 'exitDate') {
@@ -378,21 +378,21 @@ const _addBacktestTradesTableToDoc = (doc: jsPDF, result: StrategyBacktestResult
           cellValue = trade.result;
           if (trade.result === 'WIN') cellColor = [16, 185, 129];
           else if (trade.result === 'LOSS') cellColor = [239, 68, 68];
-          else if (trade.result === 'IGNORED' || trade.result === 'NO_TRIGGER') cellColor = [150,150,0]; 
+          else if (trade.result === 'IGNORED' || trade.result === 'NO_TRIGGER') cellColor = [150,150,0];
         } else {
           cellValue = String(trade[colKey as keyof BacktestTrade] ?? 'N/A');
         }
-        
+
         if (cellColor) doc.setTextColor(cellColor[0], cellColor[1], cellColor[2]);
         else doc.setTextColor(50,50,50);
-  
+
         const textLines = doc.splitTextToSize(cellValue, colWidths[colDefKey] - (cellPadding * 2));
         const textHeight = textLines.length * (cellFontSize / 10 * LINE_HEIGHT_SMALL * 0.8);
         const yOffset = (tableLineHeight - textHeight) / 2 + (cellFontSize / 10 * LINE_HEIGHT_SMALL * 0.7);
-        
+
         doc.text(textLines, currentX + cellPadding, currentY + yOffset);
-        
-        doc.setTextColor(0,0,0); 
+
+        doc.setTextColor(0,0,0);
         currentX += colWidths[colDefKey];
       }
       currentY += tableLineHeight;
@@ -406,13 +406,13 @@ export const generateBacktestPdfReport = (result: StrategyBacktestResult, assetN
   resetY();
 
   setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.BOLD, 16);
-  doc.setTextColor(20, 80, 160); 
+  doc.setTextColor(20, 80, 160);
   doc.text(`Relatório Detalhado de Backtest (${result.periodDays} Dias - Estratégia SMC/ICT)`, PAGE_WIDTH / 2, currentY, { align: 'center' });
-  currentY += LINE_HEIGHT_NORMAL * 0.5; 
+  currentY += LINE_HEIGHT_NORMAL * 0.5;
 
   const reportDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.REGULAR, 8);
-  doc.setTextColor(150, 150, 150); 
+  doc.setTextColor(150, 150, 150);
   doc.text(`Gerado em: ${reportDate}`, PAGE_WIDTH - MARGIN, currentY, { align: 'right' });
   currentY += LINE_HEIGHT_NORMAL * 0.8;
 
@@ -422,7 +422,7 @@ export const generateBacktestPdfReport = (result: StrategyBacktestResult, assetN
 
   addSectionTitle(doc, 'Detalhes das Operações', 12);
   _addBacktestTradesTableToDoc(doc, result, assetName);
-  
+
   addDisclaimer(doc);
 
   const filename = `Relatorio_Backtest_SMC_${assetName.replace(/[^a-zA-Z0-9]/g, '_')}_${result.periodDays}d_${new Date().toISOString().slice(0,16).replace(/[:T]/g, '-')}.pdf`;
@@ -434,8 +434,8 @@ export const generateMultiAssetBacktestPdfReport = (
     allResults: StrategyBacktestResult[],
     initialCapital: number,
     riskPerTrade: number,
-    periodDays: number, // This is now correctly passed and should be used
-    rrRatio: number     // This is now correctly passed for SMC
+    periodDays: number,
+    rrRatio: number
 ) => {
     const doc = new jsPDF();
     resetY();
@@ -457,38 +457,70 @@ export const generateMultiAssetBacktestPdfReport = (
     currentY += LINE_HEIGHT_NORMAL;
     const reportDate = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     doc.text(`Relatório Gerado em: ${reportDate}`, PAGE_WIDTH / 2, currentY, { align: 'center' });
-    currentY += SECTION_SPACING * 2;
+    currentY += SECTION_SPACING * 1.5;
 
-    let totalOverallPnlBRL = 0;
-    let totalOverallTrades = 0;
+    // 1. Soma dos Resultados Individuais por Ativo (existing aggregated view)
+    addSectionTitle(doc, `Soma dos Resultados Individuais por Ativo (${allResults.length} Ativos - Estratégia SMC/ICT)`, 12);
+    let totalOverallPnlSumBRL = 0;
+    let totalOverallTradesSum = 0;
     allResults.forEach(result => {
-        totalOverallPnlBRL += result.totalPnlBRL;
-        totalOverallTrades += result.totalTradesExecuted;
+        totalOverallPnlSumBRL += result.totalPnlBRL;
+        totalOverallTradesSum += result.totalTradesExecuted;
     });
+    const overallPnlSumColor = totalOverallPnlSumBRL > 0 ? [16, 185, 129] as [number,number,number] : totalOverallPnlSumBRL < 0 ? [239, 68, 68] as [number,number,number] : [0,0,0] as [number,number,number];
+    addKeyValue(doc, 'PnL Total (Soma dos Ativos, BRL)', formatBRL_PDF(totalOverallPnlSumBRL), { valueColor: overallPnlSumColor, boldValue: true, fontSize: 11 });
+    addKeyValue(doc, 'Total de Trades (Soma dos Ativos)', totalOverallTradesSum.toString(), { fontSize: 11 });
+    currentY += SECTION_SPACING;
 
-    setDocFont(doc, FONT_FAMILY_SANS, FONT_STYLES.BOLD, 12);
-    doc.setTextColor(50, 50, 50);
-    doc.text(`Resultados Agregados (${allResults.length} Ativos - Estratégia SMC/ICT):`, MARGIN, currentY);
-    currentY += LINE_HEIGHT_NORMAL * 0.8;
-    const overallPnlColor = totalOverallPnlBRL > 0 ? [16, 185, 129] as [number,number,number] : totalOverallPnlBRL < 0 ? [239, 68, 68] as [number,number,number] : [0,0,0] as [number,number,number];
-    addKeyValue(doc, 'PnL Total Consolidado (BRL)', formatBRL_PDF(totalOverallPnlBRL), { valueColor: overallPnlColor, boldValue: true, fontSize: 11 });
-    addKeyValue(doc, 'Total de Trades Executados (Consolidado)', totalOverallTrades.toString(), { fontSize: 11 });
+    // 2. Desempenho Cronológico Consolidado (Todos os Ativos)
+    addSectionTitle(doc, 'Desempenho Cronológico Consolidado (Portfólio Único)', 12);
+    const allTradesChronological = allResults
+        .flatMap(r => r.trades.filter(t => t.result !== 'IGNORED' && t.result !== 'NO_TRIGGER' && t.pnlBRL !== undefined)) // Ensure only relevant trades
+        .sort((a, b) => new Date(a.entryDate).getTime() - new Date(b.entryDate).getTime());
+
+    let consolidatedCapital = initialCapital;
+    let peakConsolidatedCapital = initialCapital;
+    let maxConsolidatedDrawdownBRL = 0;
+
+    for (const trade of allTradesChronological) {
+        consolidatedCapital += trade.pnlBRL!; // PnL is defined due to filter
+        peakConsolidatedCapital = Math.max(peakConsolidatedCapital, consolidatedCapital);
+        const currentDrawdown = peakConsolidatedCapital - consolidatedCapital;
+        maxConsolidatedDrawdownBRL = Math.max(maxConsolidatedDrawdownBRL, currentDrawdown);
+    }
+
+    const finalConsolidatedPnlBRL = consolidatedCapital - initialCapital;
+    const maxConsolidatedDrawdownPercent = peakConsolidatedCapital > 0 && initialCapital > 0 ? (maxConsolidatedDrawdownBRL / peakConsolidatedCapital) * 100 : 0;
+    const consolidatedReturnPercent = initialCapital > 0 ? (finalConsolidatedPnlBRL / initialCapital) * 100 : 0;
+
+    const consolidatedPnlColor = finalConsolidatedPnlBRL > 0 ? [16, 185, 129] as [number,number,number] : finalConsolidatedPnlBRL < 0 ? [239, 68, 68] as [number,number,number] : [0,0,0] as [number,number,number];
+
+    addKeyValue(doc, 'Capital Inicial (Consolidado)', formatBRL_PDF(initialCapital), {fontSize: 11});
+    addKeyValue(doc, 'Capital Final (Consolidado)', formatBRL_PDF(consolidatedCapital), { valueColor: consolidatedPnlColor, boldValue: true, fontSize: 11 });
+    addKeyValue(doc, 'Resultado Total (Consolidado, BRL)', formatBRL_PDF(finalConsolidatedPnlBRL), { valueColor: consolidatedPnlColor, boldValue: true, fontSize: 11 });
+    addKeyValue(doc, 'Retorno sobre Capital (Consolidado)', `${consolidatedReturnPercent.toFixed(2)}%`, { valueColor: consolidatedPnlColor, fontSize: 11 });
+    addKeyValue(doc, 'Pico de Capital (Consolidado)', formatBRL_PDF(peakConsolidatedCapital), {fontSize: 11});
+    addKeyValue(doc, 'Max Drawdown (Consolidado, BRL)', formatBRL_PDF(maxConsolidatedDrawdownBRL), {fontSize: 11, valueColor: [239, 68, 68]});
+    addKeyValue(doc, 'Max Drawdown (Consolidado, %)', `${maxConsolidatedDrawdownPercent.toFixed(2)}%`, {fontSize: 11, valueColor: [239, 68, 68]});
+    addKeyValue(doc, 'Total Trades Executados (Cronológico)', allTradesChronological.length.toString(), {fontSize: 11});
     currentY += SECTION_SPACING;
 
 
+    // 3. Detalhes por Ativo (existing loop)
     allResults.forEach((result, index) => {
-        if (index > 0) {
+        // No need to add page for the first asset if sections above are short
+        if (index > 0 || currentY > PAGE_HEIGHT - MARGIN * 5) { // Add page if not first or if low on space
             doc.addPage();
             currentY = MARGIN;
         }
-        
-        const assetDisplayName = result.assetId; 
 
-        addSectionTitle(doc, `Resultados SMC/ICT para: ${assetDisplayName}`, 14);
-        _addBacktestResultSummaryToDoc(doc, result, assetDisplayName, rrRatio); // Pass rrRatio
-        
+        const assetDisplayName = result.assetId;
+
+        addSectionTitle(doc, `Resultados Individuais para: ${assetDisplayName}`, 14);
+        _addBacktestResultSummaryToDoc(doc, result, assetDisplayName, rrRatio);
+
         if(result.trades && result.trades.length > 0){
-            addSectionTitle(doc, 'Detalhes das Operações', 12, true);
+            addSectionTitle(doc, 'Detalhes das Operações (Por Ativo)', 12, true);
             _addBacktestTradesTableToDoc(doc, result, assetDisplayName);
         } else {
             addParagraph(doc, "Nenhuma operação executada ou todas ignoradas para este ativo durante o período de backtest SMC/ICT.", {fontSize: 10, isItalic: true});
@@ -501,3 +533,4 @@ export const generateMultiAssetBacktestPdfReport = (
     const filename = `Relatorio_Multi_Backtest_SMC_${periodDays}d_${new Date().toISOString().slice(0,10)}.pdf`;
     doc.save(filename);
 };
+

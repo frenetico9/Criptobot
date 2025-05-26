@@ -5,7 +5,7 @@ import ChartDisplay from './components/ChartDisplay';
 import AnalysisPanel from './components/AnalysisPanel';
 import LoadingSpinner from './components/LoadingSpinner';
 import ErrorMessage from './components/ErrorMessage';
-import { SunIcon, MoonIcon, CogIcon, ChartBarIcon, PlayCircleIcon, BeakerIcon, ListBulletIcon } from './components/icons'; 
+import { SunIcon, MoonIcon, CogIcon, ChartBarIcon, PlayCircleIcon, BeakerIcon, ListBulletIcon } from './components/icons';
 import {
   Candle, TechnicalIndicators, SmcAnalysis,
   TradeSignal, TradeSignalType, AnalysisReport, Asset, ChartDatapoint, AssetType, SignalConfidence,
@@ -14,7 +14,7 @@ import {
 import {
   MASTER_ASSET_LIST, DEFAULT_ASSET_ID,
   SCANNER_API_DELAY_MS, SCAN_UPDATE_INTERVAL_MS,
-  EMA_TREND_PERIOD, ATR_PERIOD, 
+  EMA_TREND_PERIOD, ATR_PERIOD,
   NUM_CANDLES_TO_FETCH_FOR_FULL_BACKTEST, BACKTEST_PERIOD_DAYS,
   BACKTEST_INDICATOR_BUFFER_CANDLES,
   GENERAL_LIQUIDITY_WINDOW_EUROPE_US_UTC_START, GENERAL_LIQUIDITY_WINDOW_EUROPE_US_UTC_END,
@@ -32,6 +32,13 @@ import { fetchHistoricalData } from './services/marketDataService';
 import { calculateAllIndicators } from './services/technicalAnalysisService';
 import { analyzeSMC, findFractalSwingPoints } from './services/smcIctService'; // findFractalSwingPoints might be used here if not fully encapsulated
 import { generateMultiAssetBacktestPdfReport } from './services/pdfGenerator';
+
+// Define a new interface for the content of lastPendingSignalRef
+interface PendingSignalRefContent extends TradeSignal {
+    assetIdForRef?: string;
+    // FIX: poiUsed will be an FVG or OrderBlock, augmented with relatedMSSIndexIfAvailable
+    poiUsed?: (FVG & { relatedMSSIndexIfAvailable: number }) | (OrderBlock & { relatedMSSIndexIfAvailable: number });
+}
 
 
 const getGeneralLiquidityContext = (candleDate: string): string => {
@@ -95,6 +102,244 @@ const getCurrentKillzone = (candleDate: string): KillzoneSession => {
     return 'NONE';
 };
 
+// Modify processSignalLogic to accept and use the pendingSignalRef
+const processSignalLogic = (
+    historicalCandles: Candle[],
+    fullIndicators: TechnicalIndicators,
+    smcData: SmcAnalysis,
+    isBacktest: boolean = false,
+    currentAssetIdForLog: string = "N/A",
+    pendingSignalRef: React.MutableRefObject<PendingSignalRefContent | null>
+  ): TradeSignal => {
+    const details: string[] = [];
+    let justifications: string[] = [];
+    let signalType: TradeSignalType = 'NEUTRO';
+    let entry: number | undefined;
+    let stopLoss: number | undefined;
+    let takeProfit: number | undefined;
+    let levelsSource: string | undefined;
+    let confidenceScoreValue: SignalConfidence = 'BAIXA';
+    // FIX: Update type of poiUsedForSignal to match refined PendingSignalRefContent.poiUsed
+    let poiUsedForSignal: ((FVG & { relatedMSSIndexIfAvailable: number }) | (OrderBlock & { relatedMSSIndexIfAvailable: number })) | undefined = undefined;
+
+
+    const numCandles = historicalCandles.length;
+    if (numCandles < Math.max(EMA_TREND_PERIOD, ATR_VOLATILITY_AVG_PERIOD, 50 /* min for SMC */)) {
+        justifications.push("Dados históricos insuficientes para aplicar estratégia SMC.");
+        return { type: 'ERRO', details, justification: justifications.join('\n'), confidenceScore: 'N/D' };
+    }
+
+    const currentIdx = numCandles - 1;
+    const currentCandle = historicalCandles[currentIdx];
+    const currentAtrVal = fullIndicators.atr?.[currentIdx];
+
+    if (!currentAtrVal || currentAtrVal <= 0) {
+        justifications.push("ATR não disponível ou inválido para a vela atual.");
+        return { type: 'ERRO', details, justification: justifications.join('\n'), confidenceScore: 'N/D' };
+    }
+
+    const killzone = getCurrentKillzone(currentCandle.date);
+    details.push(`Sessão Atual: ${killzone === 'NONE' ? 'Fora de Killzone Principal' : killzone + ' Killzone'}`);
+    details.push(getGeneralLiquidityContext(currentCandle.date));
+    details.push(getVolatilityContext(currentAtrVal, fullIndicators.atr));
+    details.push(getTrendContext(currentCandle.close, fullIndicators.emaTrend?.[currentIdx], fullIndicators.emaTrend, currentIdx));
+
+    const { marketStructurePoints, inducementPoints, orderBlocks, fvgs } = smcData;
+    const lastMSS = smcData.lastMSS;
+    let idmRelevantToLastMSS = smcData.lastInducement;
+
+    if (lastMSS) {
+        details.push(`Última Estrutura: ${lastMSS.type} ${lastMSS.direction} @ ${lastMSS.level.toFixed(4)} (${new Date(lastMSS.date).toLocaleTimeString()})`);
+        if (idmRelevantToLastMSS && idmRelevantToLastMSS.relatedMSS?.index !== lastMSS.index) {
+            idmRelevantToLastMSS = inducementPoints.find(idm => idm.relatedMSS?.index === lastMSS.index && idm.relatedMSS?.direction === lastMSS.direction);
+        }
+        if (idmRelevantToLastMSS) {
+            details.push(`Inducement (IDM) (${idmRelevantToLastMSS.type}) @ ${idmRelevantToLastMSS.level.toFixed(4)}. Swept: ${idmRelevantToLastMSS.isSwept ? 'SIM ✓' : 'NÃO X'}`);
+            if (!idmRelevantToLastMSS.isSwept) {
+                 details.push(`Aguardando varredura do IDM.`);
+            }
+        } else {
+            details.push(`Nenhum Inducement (IDM) claro identificado após ${lastMSS.type}.`);
+        }
+    } else {
+        details.push("Nenhuma Quebra de Estrutura (MSS/BOS) recente clara identificada.");
+    }
+
+    // Try to restore/process pending signal first
+    if (pendingSignalRef.current && pendingSignalRef.current.type === 'AGUARDANDO_ENTRADA' && pendingSignalRef.current.poiUsed && pendingSignalRef.current.assetIdForRef === currentAssetIdForLog) {
+        // FIX: Remove unnecessary cast as pendingSignalRef.current.poiUsed is now correctly typed
+        const pendingPOI = pendingSignalRef.current.poiUsed;
+        let mitigatedThisCandle = false;
+        let entryPriceThisCandle: number | undefined;
+
+        const mssForPending = marketStructurePoints.find(ms => ms.index === pendingPOI.relatedMSSIndexIfAvailable);
+        if (mssForPending && lastMSS && mssForPending.index !== lastMSS.index && lastMSS.direction !== mssForPending.direction) {
+            details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (nova MSS oposta).`);
+            pendingSignalRef.current = null;
+        } else {
+            if (pendingPOI.type === 'bullish') {
+                if (currentCandle.low <= pendingPOI.top && currentCandle.high >= pendingPOI.bottom) {
+                    mitigatedThisCandle = true;
+                    entryPriceThisCandle = Math.min(currentCandle.open, pendingPOI.top);
+                }
+            } else {
+                if (currentCandle.high >= pendingPOI.bottom && currentCandle.low <= pendingPOI.top) {
+                    mitigatedThisCandle = true;
+                    entryPriceThisCandle = Math.max(currentCandle.open, pendingPOI.bottom);
+                }
+            }
+
+            if (mitigatedThisCandle && entryPriceThisCandle !== undefined) {
+                signalType = pendingPOI.type === 'bullish' ? 'COMPRA' : 'VENDA';
+                entry = entryPriceThisCandle;
+                stopLoss = pendingSignalRef.current.stopLoss;
+                takeProfit = pendingSignalRef.current.takeProfit;
+                levelsSource = pendingSignalRef.current.levelsSource?.replace(" (Pendente)", " (Acionado)") || "SMC Acionado";
+                justifications.push(`Entrada no POI pendente (${pendingPOI.type} ${'startIndex' in pendingPOI ? 'FVG' : 'OB'} @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}) mitigado.`);
+                details.push(...(pendingSignalRef.current.details || []).filter(d => !d.startsWith("Aguardando mitigação")));
+                confidenceScoreValue = killzone !== 'NONE' ? 'ALTA' : 'MÉDIA';
+                poiUsedForSignal = pendingPOI;
+                pendingSignalRef.current = null;
+            } else if ( (pendingPOI.type === 'bullish' && currentCandle.low < pendingPOI.bottom - (currentAtrVal * 0.5)) ||
+                        (pendingPOI.type === 'bearish' && currentCandle.high > pendingPOI.top + (currentAtrVal * 0.5)) ) {
+                details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (preço passou).`);
+                pendingSignalRef.current = null;
+            } else {
+                 details.push(`Ainda aguardando mitigação do POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}.`);
+                return { ...pendingSignalRef.current, details };
+            }
+        }
+    }
+
+    if (lastMSS && idmRelevantToLastMSS?.isSwept && signalType === 'NEUTRO') {
+        // FIX: Use potentialPOIsBase with type (FVG | OrderBlock)[] and augment selected POI later
+        let potentialPOIsBase: (FVG | OrderBlock)[] = [];
+        if (lastMSS.direction === 'bullish') {
+            const unmitigatedBullishFVGs = fvgs.filter(fvg => fvg.type === 'bullish' && !fvg.isMitigated && fvg.bottom < idmRelevantToLastMSS!.level && fvg.startIndex > lastMSS.index);
+            const unmitigatedBullishOBs = orderBlocks.filter(ob => ob.type === 'bullish' && !ob.isMitigated && ob.bottom < idmRelevantToLastMSS!.level && ob.index > lastMSS.index);
+            potentialPOIsBase = [...unmitigatedBullishFVGs, ...unmitigatedBullishOBs].sort((a,b) => a.bottom - b.bottom);
+        } else { // Bearish MSS
+            const unmitigatedBearishFVGs = fvgs.filter(fvg => fvg.type === 'bearish' && !fvg.isMitigated && fvg.top > idmRelevantToLastMSS!.level && fvg.startIndex > lastMSS.index);
+            const unmitigatedBearishOBs = orderBlocks.filter(ob => ob.type === 'bearish' && !ob.isMitigated && ob.top > idmRelevantToLastMSS!.level && ob.index > lastMSS.index);
+            potentialPOIsBase = [...unmitigatedBearishFVGs, ...unmitigatedBearishOBs].sort((a,b) => b.top - a.top);
+        }
+
+        if (potentialPOIsBase.length > 0) {
+            const selectedPOIBase = potentialPOIsBase[0];
+            // FIX: Create an augmented POI with relatedMSSIndexIfAvailable
+            const selectedPOIAugmented = { ...selectedPOIBase, relatedMSSIndexIfAvailable: lastMSS.index };
+
+            const distIdmToPoi = Math.abs(idmRelevantToLastMSS!.level - (lastMSS.direction === 'bullish' ? selectedPOIAugmented.top : selectedPOIAugmented.bottom));
+            if (distIdmToPoi > currentAtrVal * SMC_MAX_DISTANCE_IDM_TO_POI_ATR_FACTOR) {
+                details.push(`POI (${selectedPOIAugmented.type} ${'startIndex' in selectedPOIAugmented ? 'FVG' : 'OB'}) @ ${selectedPOIAugmented.bottom.toFixed(4)}-${selectedPOIAugmented.top.toFixed(4)} muito distante do IDM. Setup ignorado.`);
+            } else {
+                poiUsedForSignal = selectedPOIAugmented;
+                details.push(`POI Selecionado: ${selectedPOIAugmented.type} ${'startIndex' in selectedPOIAugmented ? 'FVG' : 'OB'} @ ${selectedPOIAugmented.bottom.toFixed(4)}-${selectedPOIAugmented.top.toFixed(4)}. Analisando mitigação...`);
+
+                let mitigatedThisCandle = false;
+                if (selectedPOIAugmented.type === 'bullish') {
+                    if (currentCandle.low <= selectedPOIAugmented.top && currentCandle.high >= selectedPOIAugmented.bottom) { mitigatedThisCandle = true; entry = Math.min(currentCandle.open, selectedPOIAugmented.top); }
+                } else {
+                    if (currentCandle.high >= selectedPOIAugmented.bottom && currentCandle.low <= selectedPOIAugmented.top) { mitigatedThisCandle = true; entry = Math.max(currentCandle.open, selectedPOIAugmented.bottom); }
+                }
+
+                const assetConfig = MASTER_ASSET_LIST.find(a => a.id === currentAssetIdForLog);
+                const assetNameForSL = assetConfig?.name || currentAssetIdForLog || "ASSET";
+                const pipsValue = assetNameForSL.toLowerCase().includes("btc") ? 1 : assetNameForSL.toLowerCase().includes("eth") ? 0.1 : 0.0005;
+                const slBuffer = Math.max(currentAtrVal * 0.05, pipsValue * SMC_SL_BUFFER_PIPS_FACTOR * 10);
+
+                if (mitigatedThisCandle && entry !== undefined) {
+                    signalType = selectedPOIAugmented.type === 'bullish' ? 'COMPRA' : 'VENDA';
+                    if (signalType === 'COMPRA') {
+                        const poiLowStructure = 'startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].low : selectedPOIAugmented.bottom;
+                        stopLoss = poiLowStructure - (currentAtrVal * SMC_SL_ATR_MULTIPLIER) - slBuffer;
+                    } else {
+                        const poiHighStructure = 'startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].high : selectedPOIAugmented.top;
+                        stopLoss = poiHighStructure + (currentAtrVal * SMC_SL_ATR_MULTIPLIER) + slBuffer;
+                    }
+                    takeProfit = entry + (entry - stopLoss) * (signalType === 'COMPRA' ? 1 : -1) * SMC_STRATEGY_MIN_RR_RATIO;
+                    levelsSource = `SMC: ${lastMSS.type} > IDM Sweep > ${'startIndex' in selectedPOIAugmented ? 'FVG' : 'OB'} Entry`;
+                    justifications.push(`Setup SMC: ${lastMSS.type} ${lastMSS.direction}, varredura de IDM, entrada no POI (${selectedPOIAugmented.type}).`);
+                    confidenceScoreValue = (killzone !== 'NONE') ? 'ALTA' : 'MÉDIA';
+                    if (killzone === 'NONE') details.push("Confiança do sinal é MÉDIA devido à formação fora de Killzone principal.");
+                    pendingSignalRef.current = null; // Clear any pending signal as we have an active one
+                } else { // POI not mitigated by current candle - potential new AGUARDANDO_ENTRADA
+                    const tempEntryForSLTP = selectedPOIAugmented.type === 'bullish' ? selectedPOIAugmented.top : selectedPOIAugmented.bottom;
+                    let tempStopLoss: number | undefined;
+                    if (selectedPOIAugmented.type === 'bullish') {
+                         tempStopLoss = ('startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].low : selectedPOIAugmented.bottom) - (currentAtrVal * SMC_SL_ATR_MULTIPLIER) - slBuffer;
+                    } else {
+                         tempStopLoss = ('startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].high : selectedPOIAugmented.top) + (currentAtrVal * SMC_SL_ATR_MULTIPLIER) + slBuffer;
+                    }
+                    let tempTakeProfit: number | undefined;
+                    if (tempStopLoss && tempEntryForSLTP) {
+                        tempTakeProfit = tempEntryForSLTP + (tempEntryForSLTP - tempStopLoss) * (selectedPOIAugmented.type === 'bullish' ? 1 : -1) * SMC_STRATEGY_MIN_RR_RATIO;
+                    }
+
+                    const newPendingSignalCandidate: PendingSignalRefContent = {
+                        type: 'AGUARDANDO_ENTRADA',
+                        details: [...details, `Aguardando mitigação do POI (${selectedPOIAugmented.type} ${'startIndex' in selectedPOIAugmented ? 'FVG' : 'OB'}) @ ${selectedPOIAugmented.bottom.toFixed(4)}-${selectedPOIAugmented.top.toFixed(4)}.`],
+                        justification: justifications.join('\n') + (justifications.length > 0 ? '\n' : '') + `Setup SMC: ${lastMSS.type} ${lastMSS.direction}, IDM varrido. Aguardando mitigação do POI.`,
+                        entry: tempEntryForSLTP,
+                        stopLoss: tempStopLoss,
+                        takeProfit: tempTakeProfit,
+                        levelsSource: `SMC: ${lastMSS.type} > IDM Sweep > POI (Pendente)`,
+                        poiUsed: selectedPOIAugmented,
+                        confidenceScore: 'MÉDIA',
+                        killzone,
+                        assetIdForRef: currentAssetIdForLog
+                    };
+
+                    const existingPendingPOI = pendingSignalRef.current?.poiUsed;
+
+                    if (pendingSignalRef.current &&
+                        pendingSignalRef.current.type === 'AGUARDANDO_ENTRADA' &&
+                        existingPendingPOI &&
+                        pendingSignalRef.current.assetIdForRef === currentAssetIdForLog &&
+                        selectedPOIAugmented.type === existingPendingPOI.type &&
+                        // Check if it's the same FVG or OB by checking 'startIndex' for FVG and 'index' for OB
+                        ((('startIndex' in selectedPOIAugmented && 'startIndex' in existingPendingPOI && selectedPOIAugmented.startIndex === existingPendingPOI.startIndex) ||
+                          (!('startIndex' in selectedPOIAugmented) && !('startIndex' in existingPendingPOI) && 'index' in selectedPOIAugmented && 'index' in existingPendingPOI && selectedPOIAugmented.index === existingPendingPOI.index))) &&
+                        Math.abs(selectedPOIAugmented.bottom - existingPendingPOI.bottom) < (currentAtrVal * 0.1) &&
+                        Math.abs(selectedPOIAugmented.top - existingPendingPOI.top) < (currentAtrVal * 0.1) &&
+                        selectedPOIAugmented.relatedMSSIndexIfAvailable === existingPendingPOI.relatedMSSIndexIfAvailable
+                        ) {
+                        
+                        const updatedDetails = [...(pendingSignalRef.current.details || []), "Nova tentativa de sinal pendente similar ignorada."];
+                        return { ...pendingSignalRef.current, details: updatedDetails };
+                    } else {
+                        signalType = newPendingSignalCandidate.type;
+                        justifications.push(newPendingSignalCandidate.justification || "Setup SMC: Aguardando mitigação do POI.");
+                        details.length = 0; // Clear previous details, use only from new candidate
+                        details.push(...(newPendingSignalCandidate.details || []));
+                        confidenceScoreValue = newPendingSignalCandidate.confidenceScore || 'MÉDIA';
+                        entry = newPendingSignalCandidate.entry;
+                        stopLoss = newPendingSignalCandidate.stopLoss;
+                        takeProfit = newPendingSignalCandidate.takeProfit;
+                        levelsSource = newPendingSignalCandidate.levelsSource;
+                        poiUsedForSignal = newPendingSignalCandidate.poiUsed;
+                        pendingSignalRef.current = newPendingSignalCandidate;
+                    }
+                }
+            }
+        } else {
+            details.push("Nenhum POI (FVG/OB) válido encontrado após varredura do IDM (ou POIs muito distantes).");
+        }
+    }
+
+    if (justifications.length === 0 && signalType === 'NEUTRO') {
+        justifications.push("Nenhum setup SMC claro identificado ou condições não atendidas.");
+    } else if (justifications.length === 0 && signalType !== 'NEUTRO' && signalType !== 'AGUARDANDO_ENTRADA') {
+        justifications.push("Sinal SMC gerado com base nas regras da estratégia.");
+    }
+
+    return {
+      type: signalType, details, justification: justifications.join('\n'),
+      entry, stopLoss, takeProfit, levelsSource,
+      confidenceScore: confidenceScoreValue, killzone, poiUsed: poiUsedForSignal
+    };
+  };
+
 
 const App: React.FC = () => {
   const [selectedAssetId, setSelectedAssetId] = useState<string>(DEFAULT_ASSET_ID);
@@ -112,7 +357,8 @@ const App: React.FC = () => {
   const [multiBacktestProgress, setMultiBacktestProgress] = useState<string>("");
   const [allAssetsBacktestResults, setAllAssetsBacktestResults] = useState<StrategyBacktestResult[]>([]);
 
-  const lastPendingSignalRef = useRef<TradeSignal | null>(null);
+  // Use the new interface for lastPendingSignalRef
+  const lastPendingSignalRef = useRef<PendingSignalRefContent | null>(null);
 
 
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -121,7 +367,7 @@ const App: React.FC = () => {
       if (storedTheme) return storedTheme === 'dark';
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
-    return true; 
+    return true;
   });
 
   useEffect(() => {
@@ -152,255 +398,33 @@ const App: React.FC = () => {
 
   const getSelectedAsset = (assetIdToGet?: string): Asset | undefined => MASTER_ASSET_LIST.find(a => a.id === (assetIdToGet || selectedAssetId));
 
-  const processSignalLogic = (
-    historicalCandles: Candle[],
-    fullIndicators: TechnicalIndicators,
-    smcData: SmcAnalysis, 
-    isBacktest: boolean = false,
-    currentAssetIdForLog: string = "N/A" 
-  ): TradeSignal => {
-    const details: string[] = [];
-    let justifications: string[] = [];
-    let signalType: TradeSignalType = 'NEUTRO';
-    let entry: number | undefined;
-    let stopLoss: number | undefined;
-    let takeProfit: number | undefined;
-    let levelsSource: string | undefined;
-    let confidenceScoreValue: SignalConfidence = 'BAIXA';
-    let poiUsedForSignal: FVG | OrderBlock | undefined = undefined;
-    
-    // console.log(`[${currentAssetIdForLog}] processSignalLogic START`);
-
-    const numCandles = historicalCandles.length;
-    if (numCandles < Math.max(EMA_TREND_PERIOD, ATR_VOLATILITY_AVG_PERIOD, 50 /* min for SMC */)) { 
-        justifications.push("Dados históricos insuficientes para aplicar estratégia SMC.");
-        // console.log(`[${currentAssetIdForLog}] Insufficient data: ${numCandles} candles.`);
-        return { type: 'ERRO', details, justification: justifications.join('\n'), confidenceScore: 'N/D' };
-    }
-
-    const currentIdx = numCandles - 1;
-    const currentCandle = historicalCandles[currentIdx];
-    const currentAtrVal = fullIndicators.atr?.[currentIdx];
-
-    if (!currentAtrVal || currentAtrVal <= 0) {
-        justifications.push("ATR não disponível ou inválido para a vela atual.");
-        // console.log(`[${currentAssetIdForLog}] Invalid ATR: ${currentAtrVal}`);
-        return { type: 'ERRO', details, justification: justifications.join('\n'), confidenceScore: 'N/D' };
-    }
-    
-    const killzone = getCurrentKillzone(currentCandle.date);
-    details.push(`Sessão Atual: ${killzone === 'NONE' ? 'Fora de Killzone Principal' : killzone + ' Killzone'}`);
-    // Not filtering strictly by killzone here, but using it for confidence.
-
-    details.push(getGeneralLiquidityContext(currentCandle.date));
-    details.push(getVolatilityContext(currentAtrVal, fullIndicators.atr));
-    details.push(getTrendContext(currentCandle.close, fullIndicators.emaTrend?.[currentIdx], fullIndicators.emaTrend, currentIdx));
-
-    const { marketStructurePoints, inducementPoints, orderBlocks, fvgs } = smcData;
-    // Use the last MSS from smcData which is already sorted by index
-    const lastMSS = smcData.lastMSS; 
-    
-    let idmRelevantToLastMSS = smcData.lastInducement;
-
-    if (lastMSS) {
-        // console.log(`[${currentAssetIdForLog}] Last MSS: ${lastMSS.type} ${lastMSS.direction} @ ${lastMSS.level.toFixed(4)} on ${lastMSS.date}`);
-        details.push(`Última Estrutura: ${lastMSS.type} ${lastMSS.direction} @ ${lastMSS.level.toFixed(4)} (${new Date(lastMSS.date).toLocaleTimeString()})`);
-        
-        // Ensure the IDM is indeed related to THIS lastMSS
-        if (idmRelevantToLastMSS && idmRelevantToLastMSS.relatedMSS?.index !== lastMSS.index) {
-            idmRelevantToLastMSS = inducementPoints.find(idm => idm.relatedMSS?.index === lastMSS.index && idm.relatedMSS?.direction === lastMSS.direction);
-            // console.log(`[${currentAssetIdForLog}] Corrected IDM for lastMSS. Found: ${!!idmRelevantToLastMSS}`);
-        }
-        
-        if (idmRelevantToLastMSS) {
-            // console.log(`[${currentAssetIdForLog}] IDM for MSS: Level ${idmRelevantToLastMSS.level.toFixed(4)}, Type ${idmRelevantToLastMSS.type}, Swept: ${idmRelevantToLastMSS.isSwept}`);
-            details.push(`Inducement (IDM) (${idmRelevantToLastMSS.type}) @ ${idmRelevantToLastMSS.level.toFixed(4)}. Swept: ${idmRelevantToLastMSS.isSwept ? 'SIM ✓' : 'NÃO X'}`);
-            if (!idmRelevantToLastMSS.isSwept) {
-                 details.push(`Aguardando varredura do IDM.`);
-            }
-        } else {
-            // console.log(`[${currentAssetIdForLog}] No relevant IDM found for the last MSS.`);
-            details.push(`Nenhum Inducement (IDM) claro identificado após ${lastMSS.type}.`);
-        }
-    } else {
-        // console.log(`[${currentAssetIdForLog}] No recent MSS found.`);
-        details.push("Nenhuma Quebra de Estrutura (MSS/BOS) recente clara identificada.");
-    }
-
-    // Try to restore/process pending signal first
-    if (lastPendingSignalRef.current && lastPendingSignalRef.current.type === 'AGUARDANDO_ENTRADA' && lastPendingSignalRef.current.poiUsed) {
-        const pendingPOI = lastPendingSignalRef.current.poiUsed;
-        let mitigatedThisCandle = false;
-        let entryPriceThisCandle: number | undefined;
-
-        // Check if the underlying MSS for the pending POI is still the most recent one
-        const mssForPending = marketStructurePoints.find(ms => ms.index === lastPendingSignalRef.current?.poiUsed?.['relatedMSSIndexIfAvailable']);
-        if (mssForPending && lastMSS && mssForPending.index !== lastMSS.index && lastMSS.direction !== mssForPending.direction) {
-            // console.log(`[${currentAssetIdForLog}] Pending POI's MSS invalidated by new MSS. Clearing pending.`);
-            details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (nova MSS oposta).`);
-            lastPendingSignalRef.current = null;
-        } else {
-            if (pendingPOI.type === 'bullish') { // POI is bullish, expect BUY
-                if (currentCandle.low <= pendingPOI.top && currentCandle.high >= pendingPOI.bottom) { 
-                    mitigatedThisCandle = true;
-                    entryPriceThisCandle = Math.min(currentCandle.open, pendingPOI.top); 
-                }
-            } else { // POI is bearish, expect SELL
-                if (currentCandle.high >= pendingPOI.bottom && currentCandle.low <= pendingPOI.top) {
-                    mitigatedThisCandle = true;
-                    entryPriceThisCandle = Math.max(currentCandle.open, pendingPOI.bottom);
-                }
-            }
-
-            if (mitigatedThisCandle && entryPriceThisCandle !== undefined) {
-                // console.log(`[${currentAssetIdForLog}] Pending POI ${pendingPOI.type} triggered entry @ ${entryPriceThisCandle.toFixed(4)}.`);
-                signalType = pendingPOI.type === 'bullish' ? 'COMPRA' : 'VENDA';
-                entry = entryPriceThisCandle;
-                stopLoss = lastPendingSignalRef.current.stopLoss;
-                takeProfit = lastPendingSignalRef.current.takeProfit;
-                levelsSource = lastPendingSignalRef.current.levelsSource?.replace(" (Pendente)", " (Acionado)") || "SMC Acionado";
-                justifications.push(`Entrada no POI pendente (${pendingPOI.type} ${'startIndex' in pendingPOI ? 'FVG' : 'OB'} @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}) mitigado.`);
-                details.push(...(lastPendingSignalRef.current.details || []).filter(d => !d.startsWith("Aguardando mitigação")));
-                confidenceScoreValue = killzone !== 'NONE' ? 'ALTA' : 'MÉDIA';
-                poiUsedForSignal = pendingPOI;
-                lastPendingSignalRef.current = null; 
-            } else if ( (pendingPOI.type === 'bullish' && currentCandle.low < pendingPOI.bottom - (currentAtrVal * 0.5)) ||
-                        (pendingPOI.type === 'bearish' && currentCandle.high > pendingPOI.top + (currentAtrVal * 0.5)) ) {
-                // console.log(`[${currentAssetIdForLog}] Pending POI invalidated (price moved too far past). POI: ${pendingPOI.bottom}-${pendingPOI.top}, Candle Low/High: ${currentCandle.low}/${currentCandle.high}`);
-                details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (preço passou).`);
-                lastPendingSignalRef.current = null;
-            } else {
-                // Still waiting for POI mitigation from pending signal
-                 details.push(`Ainda aguardando mitigação do POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}.`);
-                // console.log(`[${currentAssetIdForLog}] Still waiting for pending POI mitigation.`);
-                return { ...lastPendingSignalRef.current, details }; // Keep returning AGUARDANDO_ENTRADA
-            }
-        }
-    }
-
-    // If no pending signal was triggered, or it was cleared, look for new setups
-    if (lastMSS && idmRelevantToLastMSS?.isSwept && signalType === 'NEUTRO') {
-        // console.log(`[${currentAssetIdForLog}] MSS confirmed and IDM swept. Looking for POIs.`);
-        let potentialPOIs: (FVG | OrderBlock)[] = [];
-        if (lastMSS.direction === 'bullish') { // Bullish MSS, IDM (low) swept, look for Bullish POI *BELOW* IDM
-            const unmitigatedBullishFVGs = fvgs.filter(fvg => fvg.type === 'bullish' && !fvg.isMitigated && fvg.bottom < idmRelevantToLastMSS!.level && fvg.startIndex > lastMSS.index);
-            const unmitigatedBullishOBs = orderBlocks.filter(ob => ob.type === 'bullish' && !ob.isMitigated && ob.bottom < idmRelevantToLastMSS!.level && ob.index > lastMSS.index);
-            potentialPOIs = [...unmitigatedBullishFVGs, ...unmitigatedBullishOBs].sort((a,b) => a.bottom - b.bottom); // lowest POI first
-            // console.log(`[${currentAssetIdForLog}] Potential Bullish POIs below IDM ${idmRelevantToLastMSS!.level.toFixed(4)}: ${potentialPOIs.length}`);
-        } else { // Bearish MSS, IDM (high) swept, look for Bearish POI *ABOVE* IDM
-            const unmitigatedBearishFVGs = fvgs.filter(fvg => fvg.type === 'bearish' && !fvg.isMitigated && fvg.top > idmRelevantToLastMSS!.level && fvg.startIndex > lastMSS.index);
-            const unmitigatedBearishOBs = orderBlocks.filter(ob => ob.type === 'bearish' && !ob.isMitigated && ob.top > idmRelevantToLastMSS!.level && ob.index > lastMSS.index);
-            potentialPOIs = [...unmitigatedBearishFVGs, ...unmitigatedBearishOBs].sort((a,b) => b.top - a.top); // highest POI first
-            // console.log(`[${currentAssetIdForLog}] Potential Bearish POIs above IDM ${idmRelevantToLastMSS!.level.toFixed(4)}: ${potentialPOIs.length}`);
-        }
-        
-        if (potentialPOIs.length > 0) {
-            const selectedPOI = potentialPOIs[0]; // Take the "best" one (most extreme valid)
-            // Add related MSS index to POI for pending signal validation
-            (selectedPOI as any).relatedMSSIndexIfAvailable = lastMSS.index; 
-
-            const distIdmToPoi = Math.abs(idmRelevantToLastMSS!.level - (lastMSS.direction === 'bullish' ? selectedPOI.top : selectedPOI.bottom));
-            if (distIdmToPoi > currentAtrVal * SMC_MAX_DISTANCE_IDM_TO_POI_ATR_FACTOR) {
-                // console.log(`[${currentAssetIdForLog}] POI too far from IDM. Dist: ${distIdmToPoi.toFixed(4)}, Max allowed: ${(currentAtrVal * SMC_MAX_DISTANCE_IDM_TO_POI_ATR_FACTOR).toFixed(4)}`);
-                details.push(`POI (${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'}) @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)} muito distante do IDM. Setup ignorado.`);
-            } else {
-                poiUsedForSignal = selectedPOI;
-                // console.log(`[${currentAssetIdForLog}] Selected POI: ${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'} @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)} (Index: ${'startIndex' in selectedPOI ? selectedPOI.startIndex : selectedPOI.index})`);
-                details.push(`POI Selecionado: ${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'} @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)}. Analisando mitigação...`);
-                
-                let mitigatedThisCandle = false;
-                if (selectedPOI.type === 'bullish') {
-                    if (currentCandle.low <= selectedPOI.top && currentCandle.high >= selectedPOI.bottom) { mitigatedThisCandle = true; entry = Math.min(currentCandle.open, selectedPOI.top); }
-                } else { 
-                    if (currentCandle.high >= selectedPOI.bottom && currentCandle.low <= selectedPOI.top) { mitigatedThisCandle = true; entry = Math.max(currentCandle.open, selectedPOI.bottom); }
-                }
-
-                const assetConfig = getSelectedAsset(currentAssetIdForLog);
-                const assetNameForSL = assetConfig?.name || currentAssetIdForLog || "ASSET";
-                // Simplified pip buffer for example, ideally use more precise pip calculation based on asset
-                const pipsValue = assetNameForSL.toLowerCase().includes("btc") ? 1 : assetNameForSL.toLowerCase().includes("eth") ? 0.1 : 0.0005;
-                const slBuffer = Math.max(currentAtrVal * 0.05, pipsValue * SMC_SL_BUFFER_PIPS_FACTOR * 10); // Small buffer
-
-
-                if (mitigatedThisCandle && entry !== undefined) {
-                    // console.log(`[${currentAssetIdForLog}] POI mitigated by current candle. Entry @ ${entry.toFixed(4)}`);
-                    signalType = selectedPOI.type === 'bullish' ? 'COMPRA' : 'VENDA';
-                    
-                    if (signalType === 'COMPRA') {
-                        const poiLowStructure = 'startIndex' in selectedPOI ? historicalCandles[selectedPOI.startIndex].low : selectedPOI.bottom;
-                        stopLoss = poiLowStructure - (currentAtrVal * SMC_SL_ATR_MULTIPLIER) - slBuffer;
-                    } else { 
-                        const poiHighStructure = 'startIndex' in selectedPOI ? historicalCandles[selectedPOI.startIndex].high : selectedPOI.top;
-                        stopLoss = poiHighStructure + (currentAtrVal * SMC_SL_ATR_MULTIPLIER) + slBuffer;
-                    }
-                    takeProfit = entry + (entry - stopLoss) * (signalType === 'COMPRA' ? 1 : -1) * SMC_STRATEGY_MIN_RR_RATIO;
-                    levelsSource = `SMC: ${lastMSS.type} > IDM Sweep > ${'startIndex' in selectedPOI ? 'FVG' : 'OB'} Entry`;
-                    justifications.push(`Setup SMC: ${lastMSS.type} ${lastMSS.direction}, varredura de IDM, entrada no POI (${selectedPOI.type}).`);
-                    confidenceScoreValue = (killzone !== 'NONE') ? 'ALTA' : 'MÉDIA';
-                    if (killzone === 'NONE') details.push("Confiança do sinal é MÉDIA devido à formação fora de Killzone principal.");
-                } else {
-                    // console.log(`[${currentAssetIdForLog}] POI identified, IDM swept, but current candle NOT mitigating. Setting AGUARDANDO_ENTRADA.`);
-                    signalType = 'AGUARDANDO_ENTRADA';
-                    justifications.push(`Setup SMC: ${lastMSS.type} ${lastMSS.direction}, IDM varrido. Aguardando mitigação do POI.`);
-                    details.push(`Aguardando mitigação do POI (${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'}) @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)}.`);
-                    confidenceScoreValue = 'MÉDIA'; 
-                    
-                    const tempEntryForSLTP = selectedPOI.type === 'bullish' ? selectedPOI.top : selectedPOI.bottom; 
-                    if (selectedPOI.type === 'bullish') {
-                         stopLoss = ('startIndex' in selectedPOI ? historicalCandles[selectedPOI.startIndex].low : selectedPOI.bottom) - (currentAtrVal * SMC_SL_ATR_MULTIPLIER) - slBuffer;
-                    } else {
-                         stopLoss = ('startIndex' in selectedPOI ? historicalCandles[selectedPOI.startIndex].high : selectedPOI.top) + (currentAtrVal * SMC_SL_ATR_MULTIPLIER) + slBuffer;
-                    }
-                    if (stopLoss && tempEntryForSLTP) { // Check if stopLoss is valid before calculating TP
-                        takeProfit = tempEntryForSLTP + (tempEntryForSLTP - stopLoss) * (selectedPOI.type === 'bullish' ? 1 : -1) * SMC_STRATEGY_MIN_RR_RATIO;
-                    } else {
-                        takeProfit = undefined; // Cannot calculate TP if SL is undefined
-                    }
-                    levelsSource = `SMC: ${lastMSS.type} > IDM Sweep > POI (Pendente)`;
-                    lastPendingSignalRef.current = { type: signalType, details, justification: justifications.join('\n'), entry: tempEntryForSLTP, stopLoss, takeProfit, levelsSource, poiUsed: selectedPOI, confidenceScore: confidenceScoreValue, killzone};
-                }
-            }
-        } else {
-            // console.log(`[${currentAssetIdForLog}] No valid POIs found after IDM sweep.`);
-            details.push("Nenhum POI (FVG/OB) válido encontrado após varredura do IDM (ou POIs muito distantes).");
-        }
-    }
-    
-    if (justifications.length === 0 && signalType === 'NEUTRO') {
-        justifications.push("Nenhum setup SMC claro identificado ou condições não atendidas.");
-    } else if (justifications.length === 0 && signalType !== 'NEUTRO' && signalType !== 'AGUARDANDO_ENTRADA') {
-        justifications.push("Sinal SMC gerado com base nas regras da estratégia.");
-    }
-    // console.log(`[${currentAssetIdForLog}] processSignalLogic END. Signal: ${signalType}, Confidence: ${confidenceScoreValue}`);
-    return {
-      type: signalType, details, justification: justifications.join('\n'),
-      entry, stopLoss, takeProfit, levelsSource,
-      confidenceScore: confidenceScoreValue, killzone, poiUsed: poiUsedForSignal
-    };
-  };
-
-  const performSingleAnalysis = useCallback(async (assetIdToAnalyze: string): Promise<AnalysisReport | null> => {
+  const performSingleAnalysis = useCallback(async (
+    assetIdToAnalyze: string,
+    currentPendingSignalRef: React.MutableRefObject<PendingSignalRefContent | null>
+    ): Promise<AnalysisReport | null> => {
     const asset = getSelectedAsset(assetIdToAnalyze);
     if (!asset) {
       console.error(`Asset config not found for ${assetIdToAnalyze}`);
       throw new Error("Ativo selecionado não encontrado para análise individual.");
     }
-    
-    if (!isScanning && (selectedAssetId !== assetIdToAnalyze || !analysisReport || analysisReport.asset !== asset.name)) {
-        lastPendingSignalRef.current = null;
+
+    // Clear pending signal if it's for a different asset
+    if (currentPendingSignalRef.current && currentPendingSignalRef.current.assetIdForRef !== assetIdToAnalyze) {
+        currentPendingSignalRef.current = null;
     }
 
     try {
-      const historicalDataFull: Candle[] = await fetchHistoricalData(assetIdToAnalyze); 
+      const historicalDataFull: Candle[] = await fetchHistoricalData(assetIdToAnalyze);
       if (historicalDataFull.length < Math.max(EMA_TREND_PERIOD, ATR_VOLATILITY_AVG_PERIOD, 50 )) {
         console.warn(`Dados históricos insuficientes (${historicalDataFull.length}) para ${asset.name}. Pulando.`);
         return null;
       }
 
       const indicatorsFull: TechnicalIndicators = calculateAllIndicators(historicalDataFull);
-      const smcResult: SmcAnalysis = analyzeSMC(historicalDataFull, indicatorsFull); 
+      const smcResult: SmcAnalysis = analyzeSMC(historicalDataFull, indicatorsFull);
       
-      const finalSignal = processSignalLogic(historicalDataFull, indicatorsFull, smcResult, false, assetIdToAnalyze);
+      // Pass the ref to processSignalLogic
+      const finalSignal = processSignalLogic(historicalDataFull, indicatorsFull, smcResult, false, assetIdToAnalyze, currentPendingSignalRef);
 
       const lastIndicatorsSnapshot: Partial<TechnicalIndicators> = {};
       const lastValidIndex = historicalDataFull.length - 1;
@@ -409,17 +433,16 @@ const App: React.FC = () => {
           if (indicatorsFull[typedKey]) {
               const indicatorArray = indicatorsFull[typedKey];
               if (Array.isArray(indicatorArray) && indicatorArray.length > lastValidIndex && indicatorArray[lastValidIndex] !== undefined) {
-                  // @ts-ignore 
+                  // @ts-ignore
                   lastIndicatorsSnapshot[typedKey] = [indicatorArray[lastValidIndex]];
-              } else if (!Array.isArray(indicatorArray) && indicatorArray !== undefined){ 
+              } else if (!Array.isArray(indicatorArray) && indicatorArray !== undefined){
                   // @ts-ignore
                   lastIndicatorsSnapshot[typedKey] = [indicatorArray];
               }
           }
       }
       
-      // Update smcResult with POIs identified by processSignalLogic for display
-      const anSmcResultCopy = {...smcResult}; // Operate on a copy
+      const anSmcResultCopy = {...smcResult};
       if (finalSignal.poiUsed) {
         if (finalSignal.poiUsed.type === 'bullish') {
             anSmcResultCopy.potentialBullishPOIs = [finalSignal.poiUsed];
@@ -438,12 +461,12 @@ const App: React.FC = () => {
       return {
         asset: asset.name,
         lastCandle: historicalDataFull[lastValidIndex],
-        technicalIndicators: lastIndicatorsSnapshot, 
-        smcAnalysis: anSmcResultCopy, 
+        technicalIndicators: lastIndicatorsSnapshot,
+        smcAnalysis: anSmcResultCopy,
         finalSignal,
         fullHistory: historicalDataFull,
         fullIndicators: indicatorsFull,
-        strategyBacktestResult: analysisReport?.asset === asset.name ? analysisReport.strategyBacktestResult : null 
+        strategyBacktestResult: analysisReport?.asset === asset.name ? analysisReport.strategyBacktestResult : null
       };
     } catch (e: any) {
       console.error(`Erro na análise para ${assetIdToAnalyze}:`, e);
@@ -462,15 +485,19 @@ const App: React.FC = () => {
   const runAnalysis = useCallback(async (assetIdOverride?: string) => {
     const currentAssetToAnalyze = assetIdOverride || selectedAssetId;
     setIsLoading(true);
-    setError(null); 
+    setError(null);
 
-    if (!assetIdOverride) { 
-        setAnalysisReport(null); 
+    if (!assetIdOverride) {
+        setAnalysisReport(null);
         setChartData([]);
-        lastPendingSignalRef.current = null; 
+        lastPendingSignalRef.current = null; // Clear pending signal for a fresh analysis of the selected asset
+    } else {
+        // If assetIdOverride is different from selectedAssetId, it's likely a scan.
+        // performSingleAnalysis will handle clearing lastPendingSignalRef if assetIdForRef mismatches.
     }
 
-    const report = await performSingleAnalysis(currentAssetToAnalyze);
+
+    const report = await performSingleAnalysis(currentAssetToAnalyze, lastPendingSignalRef);
 
     if (report) {
       setAnalysisReport(report);
@@ -494,14 +521,14 @@ const App: React.FC = () => {
       });
       setChartData(newChartData);
       if (assetIdOverride && selectedAssetId !== assetIdOverride) {
-        setSelectedAssetId(assetIdOverride); 
-        lastPendingSignalRef.current = null; 
+        setSelectedAssetId(assetIdOverride);
+        // lastPendingSignalRef is managed by performSingleAnalysis or cleared if asset changes via selector
       }
-       if (error) setError(null); 
+       if (error) setError(null);
     }
     setIsLoading(false);
   }, [selectedAssetId, performSingleAnalysis, error]);
-  
+
   const runSingleAssetBacktestLogic = useCallback(async (
     assetIdForBacktest: string,
     initialCapital: number,
@@ -509,12 +536,12 @@ const App: React.FC = () => {
     periodDays: number
   ): Promise<StrategyBacktestResult | null> => {
     const asset = getSelectedAsset(assetIdForBacktest);
-    if (!asset) { 
-        return { 
+    if (!asset) {
+        return {
             assetId: assetIdForBacktest, periodDays, startDate: "", endDate: "",
             initialCapitalBRL: initialCapital, riskPerTradeBRL: riskPerTrade,
             finalCapitalBRL: initialCapital, totalPnlBRL: 0, percentageReturn: 0,
-            totalTradesAttempted: 0, totalTradesExecuted: 0, totalTradesIgnored: 0, 
+            totalTradesAttempted: 0, totalTradesExecuted: 0, totalTradesIgnored: 0,
             winningTrades: 0, losingTrades: 0, winRateExecuted: 0, totalPnlPoints: 0,
             peakCapitalBRL: initialCapital, maxDrawdownBRL: 0, maxDrawdownPercentage: 0,
             trades: [], summaryMessage: "Erro: Ativo não encontrado.", error: "Ativo não encontrado."
@@ -525,7 +552,7 @@ const App: React.FC = () => {
     let currentCapitalBRL = initialCapital;
     let peakCapitalBRL = initialCapital;
     let maxDrawdownBRL = 0;
-    
+
     let totalPnlPoints = 0;
     let winningTrades = 0;
     let losingTrades = 0;
@@ -534,8 +561,11 @@ const App: React.FC = () => {
     let totalTradesIgnored = 0;
     let grossProfitPoints = 0;
     let grossLossPoints = 0;
-    
-    let localPendingSignalForBacktest: TradeSignal | null = null;
+
+    // Use a local pending signal ref for backtesting to avoid interference with the main UI's ref
+    const localPendingSignalForBacktestRef = React.createRef<PendingSignalRefContent | null>() as React.MutableRefObject<PendingSignalRefContent | null>;
+    localPendingSignalForBacktestRef.current = null;
+
 
     const candlesPerDay = (24 * 60) / CANDLE_DURATION_MINUTES;
     const totalCandlesForThisPeriod = periodDays * candlesPerDay;
@@ -547,76 +577,43 @@ const App: React.FC = () => {
       if (allFetchedCandles.length < candlesToFetchForThisBacktest) {
         throw new Error(`Dados históricos insuficientes para ${asset.name}. Necessário ${candlesToFetchForThisBacktest}, obtido ${allFetchedCandles.length}.`);
       }
-      
+
       const backtestPeriodStartDate = allFetchedCandles[BACKTEST_INDICATOR_BUFFER_CANDLES].date;
       const backtestPeriodEndDate = allFetchedCandles[allFetchedCandles.length - 1].date;
 
       for (let i = BACKTEST_INDICATOR_BUFFER_CANDLES; i < allFetchedCandles.length; i++) {
         const currentSignalCandle = allFetchedCandles[i];
         const dataForSignalGen = allFetchedCandles.slice(0, i + 1);
-        
+
         const indicatorsForSignal = calculateAllIndicators(dataForSignalGen);
         const smcForSignal = analyzeSMC(dataForSignalGen, indicatorsForSignal);
         
+        // Pass the local ref for backtest's signal processing
+        const liveSignal = processSignalLogic(dataForSignalGen, indicatorsForSignal, smcForSignal, true, assetIdForBacktest, localPendingSignalForBacktestRef);
+        
         let tradeSignalToExecute: TradeSignal | null = null;
 
-        if (localPendingSignalForBacktest && localPendingSignalForBacktest.type === 'AGUARDANDO_ENTRADA' && localPendingSignalForBacktest.poiUsed) {
-            const pendingPOI = localPendingSignalForBacktest.poiUsed;
-            let mitigatedThisCandle = false;
-            let entryPriceThisCandle: number | undefined;
-            const currentAtrForPending = indicatorsForSignal.atr?.[i] || 0.0001;
-
-
-            const mssForPending = smcForSignal.marketStructurePoints.find(ms => ms.index === (pendingPOI as any).relatedMSSIndexIfAvailable);
-            if (mssForPending && smcForSignal.lastMSS && mssForPending.index !== smcForSignal.lastMSS.index && smcForSignal.lastMSS.direction !== mssForPending.direction) {
-                 localPendingSignalForBacktest = null; // Invalidate pending
-            } else {
-                if (pendingPOI.type === 'bullish') {
-                    if (currentSignalCandle.low <= pendingPOI.top && currentSignalCandle.high >= pendingPOI.bottom) {
-                        mitigatedThisCandle = true; entryPriceThisCandle = Math.min(currentSignalCandle.open, pendingPOI.top);
-                    }
-                } else { 
-                    if (currentSignalCandle.high >= pendingPOI.bottom && currentSignalCandle.low <= pendingPOI.top) {
-                        mitigatedThisCandle = true; entryPriceThisCandle = Math.max(currentSignalCandle.open, pendingPOI.bottom);
-                    }
-                }
-
-                if (mitigatedThisCandle && entryPriceThisCandle !== undefined) {
-                    tradeSignalToExecute = {
-                        ...localPendingSignalForBacktest, type: pendingPOI.type === 'bullish' ? 'COMPRA' : 'VENDA',
-                        entry: entryPriceThisCandle,
-                    };
-                    localPendingSignalForBacktest = null; 
-                } else if ((pendingPOI.type === 'bullish' && currentSignalCandle.low < pendingPOI.bottom - (currentAtrForPending * 0.5)) ||
-                           (pendingPOI.type === 'bearish' && currentSignalCandle.high > pendingPOI.top + (currentAtrForPending * 0.5))) {
-                    localPendingSignalForBacktest = null;
-                }
-            }
+        if (liveSignal.type === 'COMPRA' || liveSignal.type === 'VENDA') {
+            tradeSignalToExecute = liveSignal;
+        } else if (liveSignal.type === 'AGUARDANDO_ENTRADA') {
+            // AGUARDANDO_ENTRADA signals are managed by localPendingSignalForBacktestRef internally by processSignalLogic
+            // No trade to execute on this candle unless it was triggered from a previous pending state by processSignalLogic
+        } else if (liveSignal.type !== 'NEUTRO' && liveSignal.type !== 'ERRO') {
+             totalTradesAttempted++; totalTradesIgnored++;
         }
-        
-        if (!tradeSignalToExecute) { // If pending wasn't triggered, run full logic for current candle
-            const liveSignal = processSignalLogic(dataForSignalGen, indicatorsForSignal, smcForSignal, true, assetIdForBacktest);
-            if (liveSignal.type === 'AGUARDANDO_ENTRADA' && liveSignal.poiUsed) {
-                localPendingSignalForBacktest = liveSignal; 
-            } else if (liveSignal.type === 'COMPRA' || liveSignal.type === 'VENDA') {
-                tradeSignalToExecute = liveSignal;
-            } else if (liveSignal.type !== 'NEUTRO' && liveSignal.type !== 'ERRO') {
-                 totalTradesAttempted++; totalTradesIgnored++; 
-            }
-        }
+
 
         if (tradeSignalToExecute && handleTradeExecution(tradeSignalToExecute, currentSignalCandle, allFetchedCandles, i)) {
-            // Trade processed (executed or ignored due to capital etc.)
+            // Trade processed
         }
-
       } // End of main loop for candles
 
       function handleTradeExecution(
-        tradeSignal: TradeSignal, 
-        signalCandle: Candle, 
-        allCandles: Candle[], 
+        tradeSignal: TradeSignal,
+        signalCandle: Candle,
+        allCandles: Candle[],
         signalCandleIndex: number
-      ): boolean { 
+      ): boolean {
         if (!tradeSignal.entry || !tradeSignal.stopLoss || !tradeSignal.takeProfit) {
             totalTradesAttempted++; totalTradesIgnored++;
             backtestTrades.push({
@@ -632,7 +629,7 @@ const App: React.FC = () => {
 
         if (currentCapitalBRL < riskPerTrade) {
             totalTradesIgnored++;
-            backtestTrades.push({ 
+            backtestTrades.push({
                 assetId: assetIdForBacktest, signalCandleDate: signalCandle.date,
                 signalType: tradeSignal.type.includes('COMPRA') ? 'COMPRA' : 'VENDA',
                 entryDate: signalCandle.date, entryPrice: tradeSignal.entry,
@@ -640,7 +637,7 @@ const App: React.FC = () => {
                 result: 'NO_TRIGGER', reasonForExit: 'INSUFFICIENT_CAPITAL',
                 capitalBeforeTrade: currentCapitalBRL, capitalAfterTrade: currentCapitalBRL,
             });
-            return true; 
+            return true;
         }
 
         totalTradesExecuted++;
@@ -661,64 +658,62 @@ const App: React.FC = () => {
                 if (executionCandle.low <= backtestTrade.stopLossPrice) {
                     backtestTrade.result = 'LOSS'; backtestTrade.exitPrice = backtestTrade.stopLossPrice;
                     backtestTrade.exitDate = executionCandle.date; backtestTrade.reasonForExit = 'SL_HIT';
-                    break; 
+                    break;
                 }
                 if (executionCandle.high >= backtestTrade.takeProfitPrice) {
                     backtestTrade.result = 'WIN'; backtestTrade.exitPrice = backtestTrade.takeProfitPrice;
                     backtestTrade.exitDate = executionCandle.date; backtestTrade.reasonForExit = 'TP_HIT';
-                    break; 
+                    break;
                 }
-            } else { 
+            } else {
                 if (executionCandle.high >= backtestTrade.stopLossPrice) {
                     backtestTrade.result = 'LOSS'; backtestTrade.exitPrice = backtestTrade.stopLossPrice;
                     backtestTrade.exitDate = executionCandle.date; backtestTrade.reasonForExit = 'SL_HIT';
-                    break; 
+                    break;
                 }
                 if (executionCandle.low <= backtestTrade.takeProfitPrice) {
                     backtestTrade.result = 'WIN'; backtestTrade.exitPrice = backtestTrade.takeProfitPrice;
                     backtestTrade.exitDate = executionCandle.date; backtestTrade.reasonForExit = 'TP_HIT';
-                    break; 
+                    break;
                 }
             }
         }
 
-        if (backtestTrade.result === 'OPEN') { 
+        if (backtestTrade.result === 'OPEN') {
             backtestTrade.exitPrice = allCandles[allCandles.length - 1].close;
             backtestTrade.exitDate = allCandles[allCandles.length - 1].date;
             backtestTrade.reasonForExit = 'END_OF_BACKTEST_PERIOD';
         }
-        
+
         if (backtestTrade.exitPrice !== undefined) {
-            backtestTrade.pnlPoints = backtestTrade.signalType === 'COMPRA' 
+            backtestTrade.pnlPoints = backtestTrade.signalType === 'COMPRA'
                 ? backtestTrade.exitPrice - backtestTrade.entryPrice
                 : backtestTrade.entryPrice - backtestTrade.exitPrice;
-            
+
             let pnlForThisTradeBRL = 0;
             if (backtestTrade.result === 'WIN') {
                 pnlForThisTradeBRL = riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO;
             } else if (backtestTrade.result === 'LOSS') {
                 pnlForThisTradeBRL = -riskPerTrade;
-            } else { // End of period, PnL based on points
+            } else {
                 const pointsToSL = Math.abs(backtestTrade.entryPrice - backtestTrade.stopLossPrice);
                 if (pointsToSL > 0.0000001) {
                     const pnlRatioToRisk = backtestTrade.pnlPoints / pointsToSL;
                     pnlForThisTradeBRL = pnlRatioToRisk * riskPerTrade;
-                    // Cap win/loss if it's end of period
                     pnlForThisTradeBRL = Math.min(pnlForThisTradeBRL, riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO);
                     pnlForThisTradeBRL = Math.max(pnlForThisTradeBRL, -riskPerTrade);
                 } else {
-                    pnlForThisTradeBRL = 0; // Should not happen with proper SL
+                    pnlForThisTradeBRL = 0;
                 }
             }
-            
+
             backtestTrade.pnlBRL = pnlForThisTradeBRL;
             currentCapitalBRL += pnlForThisTradeBRL;
-            // totalPnlBRL += pnlForThisTradeBRL; // This will be sum of backtestTrade.pnlBRL later
             backtestTrade.capitalAfterTrade = currentCapitalBRL;
 
             peakCapitalBRL = Math.max(peakCapitalBRL, currentCapitalBRL);
             maxDrawdownBRL = Math.max(maxDrawdownBRL, peakCapitalBRL - currentCapitalBRL);
-            
+
             if (backtestTrade.pnlBRL > 0) {
                 winningTrades++; grossProfitPoints += backtestTrade.pnlPoints;
             } else if (backtestTrade.pnlBRL < 0) {
@@ -729,7 +724,7 @@ const App: React.FC = () => {
             }
         }
         backtestTrades.push(backtestTrade);
-        return true; 
+        return true;
       }
 
       const totalPnlBRLFromTrades = backtestTrades.reduce((sum, trade) => sum + (trade.pnlBRL || 0), 0);
@@ -739,7 +734,7 @@ const App: React.FC = () => {
       const averageLossPoints = losingTrades > 0 ? (grossLossPoints / losingTrades) * -1 : undefined;
       const maxDrawdownPercentageValue = (peakCapitalBRL > 0 && initialCapital > 0) ? (maxDrawdownBRL / peakCapitalBRL) * 100 : 0;
       const percentageReturnValue = (initialCapital > 0) ? (totalPnlBRLFromTrades / initialCapital) * 100 : 0;
-      
+
       let summary = `Backtest SMC (${periodDays}d) para ${asset.name}: ${totalTradesExecuted} trades de ${totalTradesAttempted} sinais (${totalTradesIgnored} ignorados). Cap. Inicial: ${initialCapital.toFixed(2)} BRL. Risco/Trade: ${riskPerTrade.toFixed(2)} BRL. PnL Total: ${totalPnlBRLFromTrades.toFixed(2)} BRL. Retorno: ${percentageReturnValue.toFixed(2)}%. Cap. Final: ${currentCapitalBRL.toFixed(2)} BRL. Acerto: ${winRateExecuted.toFixed(1)}%. RR Alvo: 1:${SMC_STRATEGY_MIN_RR_RATIO}.`;
       summary += `\nNota: A estratégia busca por Quebra de Estrutura, Inducement e entrada em POIs (FVG/OB) em Killzones.`;
 
@@ -748,7 +743,7 @@ const App: React.FC = () => {
         initialCapitalBRL: initialCapital, riskPerTradeBRL: riskPerTrade,
         finalCapitalBRL: currentCapitalBRL, totalPnlBRL: totalPnlBRLFromTrades, percentageReturn: percentageReturnValue,
         totalTradesAttempted, totalTradesExecuted, totalTradesIgnored, winningTrades, losingTrades, winRateExecuted,
-        totalPnlPoints: backtestTrades.reduce((sum, trade) => sum + (trade.pnlPoints || 0), 0), 
+        totalPnlPoints: backtestTrades.reduce((sum, trade) => sum + (trade.pnlPoints || 0), 0),
         averageWinPoints, averageLossPoints, profitFactor: profitFactorPoints,
         peakCapitalBRL: peakCapitalBRL, maxDrawdownBRL: maxDrawdownBRL, maxDrawdownPercentage: maxDrawdownPercentageValue,
         trades: backtestTrades,
@@ -756,7 +751,7 @@ const App: React.FC = () => {
       };
     } catch (e: any) {
       console.error(`Erro durante backtest de ${periodDays} dias para ${asset.name}:`, e);
-      return { 
+      return {
           assetId: assetIdForBacktest, periodDays, startDate: "", endDate: "",
           initialCapitalBRL: initialCapital, riskPerTradeBRL: riskPerTrade,
           finalCapitalBRL: initialCapital, totalPnlBRL: 0, percentageReturn: 0,
@@ -771,20 +766,20 @@ const App: React.FC = () => {
       setIsPerformingBacktest(true);
       setError(null);
       setAnalysisReport(prev => prev ? { ...prev, strategyBacktestResult: null } : null);
-      lastPendingSignalRef.current = null; 
+      lastPendingSignalRef.current = null;
 
       const result = await runSingleAssetBacktestLogic(selectedAssetId, BACKTEST_INITIAL_CAPITAL_BRL, BACKTEST_RISK_PER_TRADE_BRL, BACKTEST_PERIOD_DAYS);
-      
+
       if (result) {
           if(result.error) setError(`Erro no backtest do ativo atual: ${result.error}`);
           setAnalysisReport(prev => {
             const currentAsset = getSelectedAsset(selectedAssetId);
             const baseReport = prev || {
                 asset: currentAsset?.name || selectedAssetId,
-                lastCandle: null, 
-                technicalIndicators: {}, 
-                smcAnalysis: { swingHighs:[], swingLows:[], marketStructurePoints:[], inducementPoints:[], orderBlocks:[], fvgs:[], potentialBullishPOIs:[], potentialBearishPOIs:[]}, 
-                finalSignal: {type: 'NEUTRO', details:[], justification: ""}, 
+                lastCandle: null,
+                technicalIndicators: {},
+                smcAnalysis: { swingHighs:[], swingLows:[], marketStructurePoints:[], inducementPoints:[], orderBlocks:[], fvgs:[], potentialBullishPOIs:[], potentialBearishPOIs:[]},
+                finalSignal: {type: 'NEUTRO', details:[], justification: ""},
             };
             return {...baseReport, strategyBacktestResult: result};
           });
@@ -799,7 +794,7 @@ const App: React.FC = () => {
       setMultiBacktestProgress("Iniciando backtest de múltiplos ativos (SMC)...");
       setAllAssetsBacktestResults([]);
       setError(null);
-      lastPendingSignalRef.current = null; 
+      lastPendingSignalRef.current = null;
 
       const assetsToTest = MASTER_ASSET_LIST.filter(a => a.type === AssetType.CRYPTO);
       const results: StrategyBacktestResult[] = [];
@@ -811,8 +806,8 @@ const App: React.FC = () => {
           const result = await runSingleAssetBacktestLogic(asset.id, BACKTEST_INITIAL_CAPITAL_BRL, BACKTEST_RISK_PER_TRADE_BRL, currentBacktestPeriodDays);
           if (result) {
               results.push(result);
-          } else { 
-             results.push({ 
+          } else {
+             results.push({
                 assetId: asset.id, periodDays: currentBacktestPeriodDays, startDate: "", endDate: "",
                 initialCapitalBRL: BACKTEST_INITIAL_CAPITAL_BRL, riskPerTradeBRL: BACKTEST_RISK_PER_TRADE_BRL,
                 finalCapitalBRL: BACKTEST_INITIAL_CAPITAL_BRL, totalPnlBRL: 0, percentageReturn: 0,
@@ -821,13 +816,13 @@ const App: React.FC = () => {
                 trades: [], summaryMessage: `Falha completa no backtest para ${asset.name}.`, error: `Falha completa no backtest para ${asset.name}.`
              });
           }
-          setAllAssetsBacktestResults([...results]); 
-          
+          setAllAssetsBacktestResults([...results]);
+
           if (i < assetsToTest.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, SCANNER_API_DELAY_MS)); 
+              await new Promise(resolve => setTimeout(resolve, SCANNER_API_DELAY_MS));
           }
       }
-      
+
       setMultiBacktestProgress(`Backtest SMC de ${assetsToTest.length} ativos (${currentBacktestPeriodDays} dias) concluído. Gerando PDF...`);
       if (results.length > 0) {
           try {
@@ -854,11 +849,12 @@ const App: React.FC = () => {
   const handleScanAllAssets = useCallback(async () => {
     setError(null);
     setIsScanning(true);
-    setAnalysisReport(null); 
+    setAnalysisReport(null);
     setChartData([]);
     scannerStopFlag.current = false;
     let strongSignalFound = false;
-    lastPendingSignalRef.current = null; 
+    // For scan, each asset analysis is independent, so pending signals don't carry over between assets
+    // lastPendingSignalRef will be managed by performSingleAnalysis for each asset individually.
 
     const assetsToScan = MASTER_ASSET_LIST.filter(asset => asset.type === AssetType.CRYPTO);
 
@@ -870,22 +866,26 @@ const App: React.FC = () => {
       const asset = assetsToScan[i];
       setScanProgress(`Varrendo ${asset.name} (${i + 1}/${assetsToScan.length}) com estratégia SMC...`);
 
-      await new Promise(resolve => setTimeout(resolve, SCAN_UPDATE_INTERVAL_MS)); 
+      await new Promise(resolve => setTimeout(resolve, SCAN_UPDATE_INTERVAL_MS));
 
-      const report = await performSingleAnalysis(asset.id);
+      // Create a temporary ref for this specific asset's scan iteration if needed,
+      // or rely on performSingleAnalysis to clear the main ref if asset ID changes.
+      // The current setup with performSingleAnalysis taking lastPendingSignalRef and clearing it
+      // if assetIdForRef mismatches is suitable.
+      const report = await performSingleAnalysis(asset.id, lastPendingSignalRef);
 
       if (report && report.finalSignal) {
-        if (report.finalSignal.type.includes('FORTE') || 
+        if (report.finalSignal.type.includes('FORTE') ||
             (report.finalSignal.type === 'COMPRA' || report.finalSignal.type === 'VENDA') && report.finalSignal.confidenceScore === 'ALTA' ||
             report.finalSignal.type === 'AGUARDANDO_ENTRADA' && report.finalSignal.confidenceScore !== 'BAIXA'
            ) {
           setScanProgress(`SINAL SMC (${report.finalSignal.type}) encontrado/pendente para ${asset.name}! Carregando detalhes...`);
-          await runAnalysis(asset.id); 
+          await runAnalysis(asset.id);
           strongSignalFound = true;
-          break; 
+          break;
         }
       }
-      if (i < assetsToScan.length -1 && !scannerStopFlag.current) { 
+      if (i < assetsToScan.length -1 && !scannerStopFlag.current) {
          await new Promise(resolve => setTimeout(resolve, SCANNER_API_DELAY_MS));
       }
     }
@@ -911,7 +911,7 @@ const App: React.FC = () => {
           <div className="flex items-center space-x-2">
             <ChartBarIcon className="h-7 w-7 sm:h-8 sm:w-8 text-primary dark:text-primary-light" />
             <h1 className="text-xl sm:text-2xl font-bold text-text_primary-light dark:text-text_primary-dark">
-              Fiscal Cripto <span className="text-primary dark:text-primary-light">SMC</span> 
+              Fiscal Cripto <span className="text-primary dark:text-primary-light">SMC</span>
             </h1>
           </div>
 
@@ -920,16 +920,16 @@ const App: React.FC = () => {
               selectedAssetId={selectedAssetId}
               onAssetChange={(newAssetId) => {
                 setSelectedAssetId(newAssetId);
-                setAnalysisReport(null); 
+                setAnalysisReport(null);
                 setChartData([]);
                 setScanProgress("");
-                setError(null); 
-                lastPendingSignalRef.current = null; 
+                setError(null);
+                lastPendingSignalRef.current = null; // Clear pending signal on manual asset change
               }}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest}
             />
             <button
-              onClick={() => {setError(null); runAnalysis();}} 
+              onClick={() => {setError(null); runAnalysis();}}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest}
               className="px-3 py-2 sm:px-4 bg-primary dark:bg-primary-dark hover:bg-primary-light dark:hover:bg-primary-light text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1 sm:space-x-2 hover:scale-105 hover:brightness-110 transform"
               title="Analisar Ativo Selecionado (SMC)"
@@ -1033,12 +1033,12 @@ const App: React.FC = () => {
            )}
         </div>
         <div className="lg:col-span-1 bg-transparent dark:bg-transparent p-0 rounded-lg max-h-[calc(100vh-160px)] lg:max-h-[calc(100vh-120px)] overflow-y-auto">
-          {((isLoading || isPerformingBacktest || isPerformingMultiBacktest) && !isScanning && !analysisReport?.strategyBacktestResult && (!analysisReport?.finalSignal || analysisReport.finalSignal.type === 'NEUTRO')) && ( 
+          {((isLoading || isPerformingBacktest || isPerformingMultiBacktest) && !isScanning && !analysisReport?.strategyBacktestResult && (!analysisReport?.finalSignal || analysisReport.finalSignal.type === 'NEUTRO')) && (
             <div className="flex flex-col items-center justify-center h-full p-4 bg-surface-light dark:bg-surface-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600">
               <LoadingSpinner size="md" text={isLoading ? "Carregando relatório SMC..." : (isPerformingBacktest ? "Executando backtest SMC..." : "Executando múltiplos backtests SMC...")} />
             </div>
           )}
-           {isScanning && !analysisReport && ( 
+           {isScanning && !analysisReport && (
             <div className="flex flex-col items-center justify-center h-full p-4 bg-surface-light dark:bg-surface-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600">
               <LoadingSpinner size="md" text="Aguardando resultado da varredura SMC..." />
             </div>

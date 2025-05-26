@@ -1,8 +1,8 @@
 
 import React from 'react';
-import { AnalysisReport, Candle, FVG, SwingPoint, TradeSignalType, TechnicalIndicators, StrategyBacktestResult } from '../types';
-import { ArrowDownIcon, ArrowUpIcon, MinusSmallIcon, SparklesIcon, DownloadIcon } from './icons';
-import { EMA_SHORT_PERIOD, EMA_LONG_PERIOD, EMA_TREND_PERIOD } from '../constants';
+import { AnalysisReport, Candle, FVG, SwingPoint, TradeSignalType, TechnicalIndicators, StrategyBacktestResult, MarketStructurePoint, OrderBlock, InducementPoint, SmcAnalysis, KillzoneSession } from '../types';
+import { ArrowDownIcon, ArrowUpIcon, MinusSmallIcon, SparklesIcon, DownloadIcon, ClockIcon } from './icons'; // Added ClockIcon
+import { EMA_TREND_PERIOD, EMA_SHORT_PERIOD_DISPLAY, EMA_LONG_PERIOD_DISPLAY, SMC_STRATEGY_MIN_RR_RATIO } from '../constants';
 import { generatePdfReport, generateBacktestPdfReport } from '../services/pdfGenerator'; 
 import { formatPrice as utilFormatPrice } from '../utils/formatters';
 
@@ -24,7 +24,9 @@ const SignalIcon: React.FC<{ type: TradeSignalType }> = ({ type }) => {
       return <ArrowDownIcon className="text-danger inline-block mr-2" />;
     case 'NEUTRO':
       return <MinusSmallIcon className="text-warning inline-block mr-2" />;
-    default:
+    case 'AGUARDANDO_ENTRADA':
+      return <ClockIcon className="text-blue-500 dark:text-blue-400 inline-block mr-2" />;
+    default: // ERRO
       return <SparklesIcon className="text-gray-500 dark:text-gray-400 inline-block mr-2" />;
   }
 };
@@ -47,11 +49,11 @@ const Section: React.FC<{ title: string; children: React.ReactNode; className?: 
   </div>
 );
 
-const KeyValue: React.FC<{ label: string; value: string | number | undefined; unit?: string; className?: string; valueClassName?: string }> = ({ label, value, unit, className, valueClassName }) => (
-  <div className={`text-sm flex justify-between items-center py-0.5 ${className || ''}`}>
-    <span className="font-medium text-text_secondary-light dark:text-text_secondary-dark">{label}: </span>
+const KeyValue: React.FC<{ label: string; value: string | number | undefined | React.ReactNode; unit?: string; className?: string; valueClassName?: string }> = ({ label, value, unit, className, valueClassName }) => (
+  <div className={`text-sm flex justify-between items-start py-0.5 ${className || ''}`}>
+    <span className="font-medium text-text_secondary-light dark:text-text_secondary-dark whitespace-nowrap mr-2">{label}: </span>
     <span className={`text-text_primary-light dark:text-text_primary-dark text-right ${valueClassName || ''}`}>
-      {value !== undefined && value !== null ? `${value}${unit || ''}` : 'N/D'}
+      {value !== undefined && value !== null ? <>{value}{unit || ''}</> : 'N/D'}
     </span>
   </div>
 );
@@ -67,41 +69,64 @@ const renderLastCandle = (candle: Candle | null, assetName?: string) => candle ?
     </>
 ) : <p className="text-sm text-text_secondary-light dark:text-text_secondary-dark">Não disponível.</p>;
 
-const renderTA = (ta: Partial<TechnicalIndicators>, assetName?: string) => {
+// General TA remains for context, not primary signal driver
+const renderTAContext = (ta: Partial<TechnicalIndicators>, assetName?: string) => {
     const lastRSI = Array.isArray(ta.rsi) && ta.rsi.length > 0 ? ta.rsi[0] : undefined;
-    const lastMACDHist = Array.isArray(ta.macdHist) && ta.macdHist.length > 0 ? ta.macdHist[0] : undefined;
-    const lastEMAShort = Array.isArray(ta.emaShort) && ta.emaShort.length > 0 ? ta.emaShort[0] : undefined;
-    const lastEMALong = Array.isArray(ta.emaLong) && ta.emaLong.length > 0 ? ta.emaLong[0] : undefined;
     const lastEMATrend = Array.isArray(ta.emaTrend) && ta.emaTrend.length > 0 ? ta.emaTrend[0] : undefined;
 
     return (
         <>
-            <KeyValue label={`MME Curta (${EMA_SHORT_PERIOD})`} value={formatPrice(lastEMAShort, assetName)} />
-            <KeyValue label={`MME Longa (${EMA_LONG_PERIOD})`} value={formatPrice(lastEMALong, assetName)} />
             <KeyValue label={`MME Tendência (${EMA_TREND_PERIOD})`} value={formatPrice(lastEMATrend, assetName)} />
             <KeyValue label="IFR (RSI)" value={lastRSI?.toFixed(2)} />
-            <KeyValue label="MACD Histograma" value={formatPrice(lastMACDHist, assetName)} />
-             {ta.engulfing?.[0] === 150 && <KeyValue label="Padrão Vela Recente" value="Martelo (Alta)" valueClassName="text-success"/>}
-             {ta.engulfing?.[0] === -150 && <KeyValue label="Padrão Vela Recente" value="Estrela Cadente (Baixa)" valueClassName="text-danger"/>}
-             {ta.engulfing?.[0] === 100 && <KeyValue label="Padrão Vela Recente" value="Engolfo de Alta" valueClassName="text-success"/>}
-             {ta.engulfing?.[0] === -100 && <KeyValue label="Padrão Vela Recente" value="Engolfo de Baixa" valueClassName="text-danger"/>}
+             {/* Candlestick patterns can be confluences */}
+             {ta.engulfing?.[0] === 150 && <KeyValue label="Padrão Vela Recente" value="Martelo (Alta Potencial)" valueClassName="text-green-500"/>}
+             {ta.engulfing?.[0] === -150 && <KeyValue label="Padrão Vela Recente" value="Estrela Cadente (Baixa Potencial)" valueClassName="text-red-500"/>}
+             {ta.engulfing?.[0] === 100 && <KeyValue label="Padrão Vela Recente" value="Engolfo de Alta Potencial" valueClassName="text-green-500"/>}
+             {ta.engulfing?.[0] === -100 && <KeyValue label="Padrão Vela Recente" value="Engolfo de Baixa Potencial" valueClassName="text-red-500"/>}
         </>
     );
 };
 
-const renderSMC = (smc: AnalysisReport['smcAnalysis'], assetName?: string) => (
+const renderSMC = (smc: SmcAnalysis, assetName?: string) => {
+    const { marketStructurePoints, inducementPoints, selectedPOI } = smc;
+    const lastMSS = marketStructurePoints.filter(p => p.type === 'CHoCH' || p.type === 'BOS').pop();
+    const lastIDM = inducementPoints.length > 0 ? inducementPoints[inducementPoints.length-1] : undefined;
+
+    return (
     <>
-        <KeyValue label="Pivô de Alta Recente" value={formatPrice(smc.recentSwingHigh, assetName)} />
-        <KeyValue label="Pivô de Baixa Recente" value={formatPrice(smc.recentSwingLow, assetName)} />
-        {smc.closestBullishFVG && (
-            <KeyValue label="FVG Alta Próximo" value={`Topo: ${formatPrice(smc.closestBullishFVG.top, assetName)}, Base: ${formatPrice(smc.closestBullishFVG.bottom, assetName)}`} />
+        {lastMSS && (
+            <KeyValue 
+                label={`Última Estrutura (${lastMSS.type})`} 
+                value={`${lastMSS.direction === 'bullish' ? 'Alta' : 'Baixa'} em ${formatPrice(lastMSS.level, assetName)} (${new Date(lastMSS.date).toLocaleTimeString('pt-BR')})`} 
+                valueClassName={lastMSS.direction === 'bullish' ? 'text-success' : 'text-danger'}
+            />
         )}
-        {smc.closestBearishFVG && (
-            <KeyValue label="FVG Baixa Próximo" value={`Topo: ${formatPrice(smc.closestBearishFVG.top, assetName)}, Base: ${formatPrice(smc.closestBearishFVG.bottom, assetName)}`} />
+        {!lastMSS && <KeyValue label="Estrutura Principal" value="Nenhuma clara recentemente."/>}
+
+        {lastIDM && (
+             <KeyValue 
+                label={`Inducement (${lastIDM.type === 'high' ? 'Topo' : 'Fundo'})`} 
+                value={`${formatPrice(lastIDM.level, assetName)} ${lastIDM.isSwept ? '(Varrido ✓)' : '(Aguardando X)'}`} 
+                valueClassName={lastIDM.isSwept ? 'text-green-500' : 'text-amber-500'}
+            />
         )}
-        <KeyValue label="FVGs Identificados" value={smc.fvgs.length} />
+        {!lastIDM && lastMSS && <KeyValue label="Inducement" value="Nenhum claro após MSS."/>}
+        
+        {selectedPOI && (
+            <KeyValue 
+                label={`POI Alvo (${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'})`}
+                value={<div className="text-xs text-right">{`De ${formatPrice(selectedPOI.bottom, assetName)} a ${formatPrice(selectedPOI.top, assetName)}`} <br/> {`Índice: ${'startIndex' in selectedPOI ? selectedPOI.startIndex : selectedPOI.index}`}</div> }
+                valueClassName={selectedPOI.type === 'bullish' ? 'text-blue-500 dark:text-blue-400' : 'text-purple-500 dark:text-purple-400'}
+            />
+        )}
+        {lastMSS && lastIDM?.isSwept && !selectedPOI && <KeyValue label="POI Alvo" value="Nenhum POI válido encontrado/selecionado."/>}
+
+        <KeyValue label="FVGs Relevantes (Não Mitigados)" value={smc.fvgs.filter(f=>!f.isMitigated).length} />
+        <KeyValue label="Order Blocks Relevantes (Não Mitigados)" value={smc.orderBlocks.filter(ob=>!ob.isMitigated).length} />
     </>
-);
+    );
+};
+
 
 const renderStrategyBacktestResult = (result: StrategyBacktestResult, assetName?: string) => (
     <>
@@ -146,7 +171,7 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
   const { asset, lastCandle, technicalIndicators, smcAnalysis, finalSignal, strategyBacktestResult } = report;
 
   const displaySignalType = (type: TradeSignalType) => {
-    return type.replace(/_/g, ' ').replace('FORTE', '(FORTE)');
+    return type.replace(/_/g, ' ').replace('FORTE', '(FORTE)').replace('AGUARDANDO ENTRADA', 'AGUARD. ENTRADA');
   }
 
   let signalBgColor = 'bg-gray-200 dark:bg-gray-600/30';
@@ -161,9 +186,11 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
   } else if (finalSignal.type === 'NEUTRO') {
     signalBgColor = 'bg-warning/10 dark:bg-warning/20';
     signalTextColor = 'text-warning';
+  } else if (finalSignal.type === 'AGUARDANDO_ENTRADA') {
+    signalBgColor = 'bg-blue-500/10 dark:bg-blue-500/20';
+    signalTextColor = 'text-blue-500 dark:text-blue-400';
   }
 
-  const isStrongSignal = finalSignal.type === 'COMPRA_FORTE' || finalSignal.type === 'VENDA_FORTE';
 
   const handleDownloadSingleAnalysisPdf = () => {
     if (report) {
@@ -173,25 +200,29 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
 
   const handleDownloadBacktestPdf = () => {
     if (report && strategyBacktestResult && strategyBacktestResult.trades.length > 0) {
-      generateBacktestPdfReport(strategyBacktestResult, report.asset);
+      // Pass SMC_STRATEGY_MIN_RR_RATIO to the PDF generator
+      generateBacktestPdfReport(strategyBacktestResult, report.asset, SMC_STRATEGY_MIN_RR_RATIO);
     }
   };
 
 
   return (
     <div className="bg-surface-light dark:bg-surface-dark p-2 sm:p-4 space-y-4 h-full overflow-y-auto text-text_primary-light dark:text-text_primary-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600">
-      <h2 className="text-xl sm:text-2xl font-bold text-center text-primary dark:text-primary-light mb-3">Análise para {asset} (Estratégia M15 Avançada)</h2>
+      <h2 className="text-xl sm:text-2xl font-bold text-center text-primary dark:text-primary-light mb-3">Análise SMC/ICT para {asset} (M15)</h2>
 
-      <Section title="Sinal Final Consolidado" className="!bg-opacity-50 dark:!bg-opacity-50">
+      <Section title="Sinal da Estratégia SMC" className="!bg-opacity-50 dark:!bg-opacity-50">
         <div className={`p-3 rounded-md text-center font-semibold text-lg ${signalBgColor} ${signalTextColor}`}>
           <SignalIcon type={finalSignal.type} /> {displaySignalType(finalSignal.type)}
         </div>
         {finalSignal.confidenceScore && (
             <KeyValue label="Confiança do Sinal" value={finalSignal.confidenceScore} className="text-xs mt-1" />
         )}
+        {finalSignal.killzone && finalSignal.killzone !== 'NONE' && (
+            <KeyValue label="Killzone" value={finalSignal.killzone} className="text-xs" valueClassName={finalSignal.killzone === 'LONDON' ? 'text-purple-500' : 'text-orange-500'}/>
+        )}
         <p className="text-xs sm:text-sm mt-2 whitespace-pre-wrap text-text_secondary-light dark:text_secondary-dark">{finalSignal.justification}</p>
         
-        {(isStrongSignal || finalSignal.type !== 'NEUTRO') && finalSignal.type !== 'ERRO' && (
+        {(finalSignal.type !== 'NEUTRO' && finalSignal.type !== 'ERRO' && finalSignal.type !== 'AGUARDANDO_ENTRADA') && (
             <button
                 onClick={handleDownloadSingleAnalysisPdf}
                 disabled={isLoading || isScanning || isPerformingBacktest}
@@ -205,14 +236,13 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
 
         {finalSignal.details.length > 0 && (
             <div className="mt-2">
-                <p className="text-xs font-semibold text-text_primary-light dark:text-text_primary-dark">Fatores de Contexto / Detalhes da Estratégia:</p>
+                <p className="text-xs font-semibold text-text_primary-light dark:text-text_primary-dark">Contexto e Detalhes:</p>
                 <ul className="list-disc list-inside text-xs text-text_secondary-light dark:text-text_secondary-dark space-y-0.5">
                     {finalSignal.details.map((detail, i) => {
-                        const isContext = detail.toLowerCase().startsWith('contexto ');
                         let itemStyle = {};
-                        if (isContext && detail.includes('ALTA')) itemStyle = { color: 'var(--tw-color-success)'}; 
-                        if (isContext && detail.includes('BAIXA') && detail.includes('Liquidez')) itemStyle = { color: 'var(--tw-color-warning)'}; 
-                        if (detail.toLowerCase().startsWith('filtro:') || detail.toLowerCase().includes('ignorado')) itemStyle = {color: 'var(--tw-color-danger)'};
+                        if (detail.toLowerCase().includes('killzone') && (detail.includes('LONDON') || detail.includes('NEWYORK'))) itemStyle = { color: 'var(--tw-color-primary)'}; 
+                        if (detail.toLowerCase().includes('varrido ✓')) itemStyle = { color: 'var(--tw-color-success)'};
+                        if (detail.toLowerCase().includes('aguardando x')) itemStyle = { color: 'var(--tw-color-warning)'};
                         
                         return <li key={i} style={itemStyle}>{detail}</li>;
                     })}
@@ -225,12 +255,13 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
             <KeyValue label="Stop Loss Sugerido" value={formatPrice(finalSignal.stopLoss, asset)} valueClassName="font-bold text-red-600 dark:text-red-400" />
             <KeyValue label="Take Profit Sugerido" value={formatPrice(finalSignal.takeProfit, asset)} valueClassName="font-bold text-green-600 dark:text-green-400" />
             <KeyValue label="Fonte Níveis" value={finalSignal.levelsSource || 'N/D'} className="text-xs" valueClassName="italic text-text_secondary-light dark:text_text_secondary-dark"/>
+            <KeyValue label="Risco/Retorno Alvo" value={`1:${SMC_STRATEGY_MIN_RR_RATIO.toFixed(1)}`} className="text-xs" />
           </div>
         )}
       </Section>
 
       {strategyBacktestResult && (
-        <Section title={`Backtest da Estratégia (${strategyBacktestResult.periodDays} Dias)`}>
+        <Section title={`Backtest da Estratégia SMC (${strategyBacktestResult.periodDays} Dias)`}>
             {renderStrategyBacktestResult(strategyBacktestResult, asset)}
             {strategyBacktestResult.trades && strategyBacktestResult.trades.length > 0 && (
                  <button
@@ -245,10 +276,10 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
             )}
         </Section>
       )}
-
+      
+      <Section title="Análise Detalhada SMC/ICT">{renderSMC(smcAnalysis, asset)}</Section>
       <Section title="Dados da Vela Atual">{renderLastCandle(lastCandle, asset)}</Section>
-      <Section title="Indicadores Técnicos (Estratégia Principal)">{renderTA(technicalIndicators, asset)}</Section>
-      <Section title="Insights SMC/ICT (Contexto Adicional)">{renderSMC(smcAnalysis, asset)}</Section>
+      <Section title="Contexto Técnico Geral (Indicadores)">{renderTAContext(technicalIndicators, asset)}</Section>
 
     </div>
   );

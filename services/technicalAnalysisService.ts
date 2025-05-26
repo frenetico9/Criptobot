@@ -1,7 +1,8 @@
 
 import { Candle, TechnicalIndicators } from '../types';
 import {
-  EMA_SHORT_PERIOD, EMA_LONG_PERIOD, EMA_TREND_PERIOD, RSI_PERIOD,
+  // FIX: Use EMA_SHORT_PERIOD_DISPLAY and EMA_LONG_PERIOD_DISPLAY as EMA_SHORT_PERIOD and EMA_LONG_PERIOD are no longer exported
+  EMA_SHORT_PERIOD_DISPLAY, EMA_LONG_PERIOD_DISPLAY, EMA_TREND_PERIOD, RSI_PERIOD,
   MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD,
   BBANDS_PERIOD, BBANDS_STDDEV, ATR_PERIOD,
   STOCH_K_PERIOD, STOCH_D_PERIOD, STOCH_SMOOTH_K, VOLUME_SMA_PERIOD,
@@ -292,8 +293,9 @@ export const calculateAllIndicators = (candles: Candle[]): TechnicalIndicators =
   const { stochK, stochD } = calculateStochastic(candles, STOCH_K_PERIOD, STOCH_D_PERIOD, STOCH_SMOOTH_K);
 
   return {
-    emaShort: calculateEMA(closes, EMA_SHORT_PERIOD),
-    emaLong: calculateEMA(closes, EMA_LONG_PERIOD),
+    // FIX: Use EMA_SHORT_PERIOD_DISPLAY and EMA_LONG_PERIOD_DISPLAY
+    emaShort: calculateEMA(closes, EMA_SHORT_PERIOD_DISPLAY),
+    emaLong: calculateEMA(closes, EMA_LONG_PERIOD_DISPLAY),
     emaTrend: calculateEMA(closes, EMA_TREND_PERIOD), // Added EMA Trend
     rsi: calculateRSI(closes, RSI_PERIOD),
     macdLine,

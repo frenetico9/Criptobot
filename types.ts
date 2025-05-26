@@ -11,7 +11,7 @@ export interface Candle {
 export interface TechnicalIndicators {
   emaShort?: number[]; 
   emaLong?: number[];  
-  emaTrend?: number[]; // Kept for contextual trend information
+  emaTrend?: number[]; // Kept for contextual trend information (e.g., EMA50)
   rsi?: number[];
   macdLine?: number[];
   macdSignal?: number[];
@@ -31,38 +31,86 @@ export interface FVG {
   top: number;
   bottom: number;
   mid: number;
-  startIndex: number;
-  endIndex: number;
+  startIndex: number; // Index in the full candle array
+  endIndex: number;   // Index in the full candle array
+  isMitigated?: boolean; // Has price already tested this FVG significantly?
+  isPotentialPOI?: boolean; // Flag if this FVG is considered a Point of Interest by the strategy
 }
 
 export interface SwingPoint {
   type: 'high' | 'low';
   price: number;
+  index: number; // Index in the full candle array
+  date: string;
+  isMajor?: boolean; // Optional: flag for more significant swing points
+}
+
+export interface MarketStructurePoint {
+  type: 'BOS' | 'CHoCH' | 'Sweep'; // Break of Structure, Change of Character, Liquidity Sweep
+  level: number; // Price level of the broken/swept structure
+  index: number; // Index of the candle that confirmed the break/sweep
+  date: string;
+  direction: 'bullish' | 'bearish'; // Bullish BOS/CHoCH, Bearish BOS/CHoCH. For Sweep, direction of price movement after sweep.
+  sweptPoint?: SwingPoint; // The swing point that was broken or swept
+}
+
+export interface OrderBlock {
+  type: 'bullish' | 'bearish';
+  top: number;    // High of the OB candle for bearish, high of range for bullish
+  bottom: number; // Low of the OB candle for bullish, low of range for bearish
+  mid: number;    // Midpoint of the OB
+  open: number;   // Open of the OB candle
+  close: number;  // Close of the OB candle
+  index: number;  // Index of the OB candle in the full candle array
+  date: string;
+  hasImbalance: boolean; // Does it have a subsequent FVG?
+  sweptLiquidityBefore?: boolean; // Did this OB form after sweeping liquidity?
+  isMitigated?: boolean;
+  isPotentialPOI?: boolean; // Flag if this OB is considered a Point of Interest
+}
+
+export interface InducementPoint {
+  level: number;
   index: number;
+  date: string;
+  type: 'high' | 'low'; // Liquidity type that was induced
+  isSwept?: boolean;
+  relatedMSS?: MarketStructurePoint; // The MSS this IDM is related to
 }
 
 export interface SmcAnalysis {
-  fvgs: FVG[];
   swingHighs: SwingPoint[];
   swingLows: SwingPoint[];
-  recentSwingHigh?: number;
-  recentSwingLow?: number;
-  closestBullishFVG?: FVG;
-  closestBearishFVG?: FVG;
+  marketStructurePoints: MarketStructurePoint[];
+  inducementPoints: InducementPoint[];
+  orderBlocks: OrderBlock[];
+  fvgs: FVG[]; // All identified FVGs
+
+  // POIs identified by the strategy for potential entry
+  potentialBullishPOIs: (FVG | OrderBlock)[];
+  potentialBearishPOIs: (FVG | OrderBlock)[];
+  
+  // For quick reference in AnalysisPanel, may duplicate some info from arrays above
+  lastMSS?: MarketStructurePoint;
+  lastInducement?: InducementPoint;
+  selectedPOI?: FVG | OrderBlock; // The specific POI the strategy is targeting
 }
 
-export type TradeSignalType = 'COMPRA_FORTE' | 'COMPRA' | 'VENDA_FORTE' | 'VENDA' | 'NEUTRO' | 'ERRO';
+export type TradeSignalType = 'COMPRA_FORTE' | 'COMPRA' | 'VENDA_FORTE' | 'VENDA' | 'NEUTRO' | 'ERRO' | 'AGUARDANDO_ENTRADA';
 export type SignalConfidence = 'ALTA' | 'MÉDIA' | 'BAIXA' | 'N/D';
+export type KillzoneSession = 'LONDON' | 'NEWYORK' | 'ASIA' | 'NONE';
 
 export interface TradeSignal {
   type: TradeSignalType;
-  details: string[];
-  justification: string;
-  entry?: number;
+  details: string[]; // Contextual details, confluences, killzone info
+  justification: string; // Main reason for the signal (e.g., SMC setup steps)
+  entry?: number; // Proposed entry price
   stopLoss?: number;
   takeProfit?: number;
-  levelsSource?: string;
+  levelsSource?: string; // e.g., "SMC Strategy - FVG Entry"
   confidenceScore?: SignalConfidence;
+  killzone?: KillzoneSession; // Which killzone the signal formed in (if any)
+  poiUsed?: FVG | OrderBlock; // The specific POI that triggered the entry
 }
 
 export interface BacktestTrade {
@@ -78,8 +126,7 @@ export interface BacktestTrade {
   result: 'WIN' | 'LOSS' | 'OPEN' | 'NO_TRIGGER' | 'IGNORED'; 
   pnlPoints?: number;
   pnlPercentage?: number; 
-  // Simplified reasonForExit
-  reasonForExit?: 'TP_HIT' | 'SL_HIT' | 'END_OF_BACKTEST_PERIOD' | 'INSUFFICIENT_CAPITAL' | 'FILTERED_INTERNAL' | 'NO_CLEAR_SETUP';
+  reasonForExit?: 'TP_HIT' | 'SL_HIT' | 'END_OF_BACKTEST_PERIOD' | 'INSUFFICIENT_CAPITAL' | 'FILTERED_INTERNAL' | 'NO_CLEAR_SETUP' | 'IDM_NOT_SWEPT' | 'POI_MISSED';
   durationCandles?: number;
   pnlBRL?: number; 
   capitalBeforeTrade?: number; 
@@ -123,11 +170,11 @@ export interface StrategyBacktestResult {
 export interface AnalysisReport {
   asset: string;
   lastCandle: Candle | null;
-  technicalIndicators: Partial<TechnicalIndicators>; 
-  smcAnalysis: SmcAnalysis;
+  technicalIndicators: Partial<TechnicalIndicators>; // Snapshot of last values for general context
+  smcAnalysis: SmcAnalysis; // Detailed SMC analysis results
   finalSignal: TradeSignal;
-  fullHistory?: Candle[]; 
-  fullIndicators?: TechnicalIndicators; 
+  fullHistory?: Candle[]; // Full historical data used for analysis
+  fullIndicators?: TechnicalIndicators; // All calculated indicator series
   strategyBacktestResult?: StrategyBacktestResult | null;
 }
 
@@ -142,9 +189,10 @@ export interface Asset {
 }
 
 export interface ChartDatapoint extends Candle {
-  emaShort?: number;
-  emaLong?: number;
-  emaTrend?: number; // Kept for chart display
+  // General indicators
+  emaShort?: number; // e.g. EMA9 for display
+  emaLong?: number;  // e.g. EMA21 for display
+  emaTrend?: number; // e.g. EMA50 for trend context
   rsi?: number;
   macdLine?: number;
   macdSignal?: number;
@@ -154,4 +202,9 @@ export interface ChartDatapoint extends Candle {
   bbLower?: number;
   stochK?: number;
   stochD?: number;
+
+  // SMC Visualizations
+  isLondonKillzone?: boolean;
+  isNewYorkKillzone?: boolean;
+  // Other SMC elements like BOS/CHoCH lines, IDM markers, POI highlights will be drawn as ReferenceLines/Areas or custom shapes
 }

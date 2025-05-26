@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en" class="dark"> 
+<html lang="en" class="dark"> {/* Apply dark mode by default */}
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Crypto Fiscal Pro - M15 Scanner</title> 
+    <title>Crypto Fiscal Pro - M15 Scanner</title> {/* Updated title */}
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -49,7 +49,7 @@
         }
       }
     </script>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@^19.1.0",
@@ -63,45 +63,43 @@
     "@google/genai": "https://esm.sh/@google/genai@^1.0.1"
   }
 }
-</script>
-<style>
-  body.light-mode-bg {
-    /* background-color: #F3F4F6; /* base: background-light */
-    background-image:
-      radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.07) 0%, transparent 50%), /* Increased opacity */
-      radial-gradient(circle at 90% 80%, rgba(245, 158, 11, 0.05) 0%, transparent 40%), /* Increased opacity */
-      linear-gradient(135deg, rgba(229, 231, 235, 0.08) 0%, rgba(209, 213, 219, 0.06) 100%); /* Increased opacity */
-    background-attachment: fixed;
-    background-size: cover;
-  }
-  body.dark-mode-bg {
-    /* background-color: #111827; /* base: background-dark */
-    background-image:
-      radial-gradient(circle at 15% 25%, rgba(59, 130, 246, 0.08) 0%, transparent 60%), /* Increased opacity */
-      radial-gradient(circle at 85% 75%, rgba(245, 158, 11, 0.07) 0%, transparent 50%), /* Increased opacity */
-      linear-gradient(135deg, rgba(31, 41, 55, 0.15) 0%, rgba(17, 24, 39, 0.12) 100%); /* Increased opacity */
-    background-attachment: fixed;
-    background-size: cover;
-  }
-  /* Ensure html and body take full height for background to cover */
-  html, body {
-    height: 100%;
-    margin: 0;
-  }
-  /* Base background colors that the gradients will overlay, ensuring no flicker during class change */
-  body {
-    background-color: #F3F4F6; /* Default light background */
-  }
-  html.dark body {
-    background-color: #111827; /* Default dark background */
-  }
-
-</style>
-</head>
+    </script>
+    <link rel="stylesheet" href="index.css">
+    <style>
+      body.light-mode-bg {
+        /* background-color: #F3F4F6; /* base: background-light */
+        background-image:
+          radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.07) 0%, transparent 50%), /* Increased opacity */
+          radial-gradient(circle at 90% 80%, rgba(245, 158, 11, 0.05) 0%, transparent 40%), /* Increased opacity */
+          linear-gradient(135deg, rgba(229, 231, 235, 0.08) 0%, rgba(209, 213, 219, 0.06) 100%); /* Increased opacity */
+        background-attachment: fixed;
+        background-size: cover;
+      }
+      body.dark-mode-bg {
+        /* background-color: #111827; /* base: background-dark */
+        background-image:
+          radial-gradient(circle at 15% 25%, rgba(59, 130, 246, 0.08) 0%, transparent 60%), /* Increased opacity */
+          radial-gradient(circle at 85% 75%, rgba(245, 158, 11, 0.07) 0%, transparent 50%), /* Increased opacity */
+          linear-gradient(135deg, rgba(31, 41, 55, 0.15) 0%, rgba(17, 24, 39, 0.12) 100%); /* Increased opacity */
+        background-attachment: fixed;
+        background-size: cover;
+      }
+      /* Ensure html and body take full height for background to cover */
+      html, body {
+        height: 100%;
+        margin: 0;
+      }
+      /* Base background colors that the gradients will overlay, ensuring no flicker during class change */
+      body {
+        background-color: #F3F4F6; /* Default light background */
+      }
+      html.dark body {
+        background-color: #111827; /* Default dark background */
+      }
+    </style>
+  </head>
   <body class="text-text_primary-light dark:text-text_primary-dark transition-colors duration-300">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
-<link rel="stylesheet" href="index.css">
-<script src="index.tsx" type="module"></script>

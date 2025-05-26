@@ -810,8 +810,9 @@ const App: React.FC = () => {
       lastPendingSignalRef.current = null;
 
       const assetsToTest = MASTER_ASSET_LIST.filter(a => a.type === AssetType.CRYPTO);
-      const results: StrategyBacktestResult[] = [];
       const currentBacktestPeriodDays = BACKTEST_PERIOD_DAYS;
+
+      const results: StrategyBacktestResult[] = [];
 
       for (let i = 0; i < assetsToTest.length; i++) {
           const asset = assetsToTest[i];
@@ -917,7 +918,7 @@ const App: React.FC = () => {
           <div className="flex items-center space-x-2">
             <ChartBarIcon className="h-7 w-7 sm:h-8 sm:w-8 text-primary dark:text-primary-light" />
             <h1 className="text-xl sm:text-2xl font-bold text-text_primary-light dark:text-text_primary-dark">
-              Fiscal Cripto <span className="text-primary dark:text-primary-light">SMC</span>
+              Fiscal Cripto <span className="text-primary dark:text-primary-light">SMC (M15)</span>
             </h1>
           </div>
 
@@ -938,11 +939,11 @@ const App: React.FC = () => {
               onClick={() => {setError(null); runAnalysis();}}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest}
               className="px-3 py-2 sm:px-4 bg-primary dark:bg-primary-dark hover:bg-primary-light dark:hover:bg-primary-light text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1 sm:space-x-2 hover:scale-105 hover:brightness-110 transform"
-              title="Analisar Ativo Selecionado (SMC)"
+              title="Analisar Ativo Selecionado (SMC M15)"
             >
               <CogIcon className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{isLoading ? 'Analisando...' : 'Analisar SMC'}</span>
-              <span className="sm:hidden text-xs">{isLoading ? '...' : 'Analisar SMC'}</span>
+              <span className="hidden sm:inline">{isLoading ? 'Analisando...' : 'Analisar SMC (M15)'}</span>
+              <span className="sm:hidden text-xs">{isLoading ? '...' : 'Analisar SMC (M15)'}</span>
             </button>
              <button
               onClick={isScanning ? stopScan : () => {setError(null); handleScanAllAssets();}}
@@ -952,31 +953,31 @@ const App: React.FC = () => {
                 ? 'bg-red-500 hover:bg-red-600 text-white'
                 : 'bg-green-500 dark:bg-green-600 hover:bg-green-600 dark:hover:bg-green-700 text-white'
               }`}
-              title={isScanning ? "Parar Varredura SMC" : "Iniciar Varredura SMC de Todos os Ativos"}
+              title={isScanning ? "Parar Varredura SMC (M15)" : "Iniciar Varredura SMC (M15) de Todos os Ativos"}
             >
               <PlayCircleIcon className={`w-5 h-5 ${isScanning && !scannerStopFlag.current ? 'animate-ping' : ''}`} />
-              <span className="hidden sm:inline">{isScanning ? (scannerStopFlag.current ? 'Parando...' : 'Parar Scan') : 'Scan All SMC'}</span>
-              <span className="sm:hidden text-xs">{isScanning ? (scannerStopFlag.current ? '...' : 'Parar') : 'Scan All SMC'}</span>
+              <span className="hidden sm:inline">{isScanning ? (scannerStopFlag.current ? 'Parando...' : 'Parar Scan') : 'Scan All SMC (M15)'}</span>
+              <span className="sm:hidden text-xs">{isScanning ? (scannerStopFlag.current ? '...' : 'Parar') : 'Scan All SMC (M15)'}</span>
             </button>
             <button
               onClick={() => {setError(null); handleRunCurrentAssetBacktest();}}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest }
               className="px-3 py-2 sm:px-4 bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-800 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1 sm:space-x-2 hover:scale-105 hover:brightness-110 transform"
-              title={`Executar Backtest SMC de ${BACKTEST_PERIOD_DAYS} Dias para o Ativo Atual (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
+              title={`Executar Backtest SMC M15 de ${BACKTEST_PERIOD_DAYS} Dias para o Ativo Atual (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
             >
               <BeakerIcon className={`w-5 h-5 ${isPerformingBacktest ? 'animate-pulse' : ''}`} />
-              <span className="hidden sm:inline">{isPerformingBacktest ? 'Testando...' : `BT Ativo SMC (${BACKTEST_PERIOD_DAYS}d)`}</span>
-              <span className="sm:hidden text-xs">{isPerformingBacktest ? '...' : `BT Ativo SMC (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="hidden sm:inline">{isPerformingBacktest ? 'Testando...' : `BT Ativo SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="sm:hidden text-xs">{isPerformingBacktest ? '...' : `BT Ativo SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
             </button>
             <button
               onClick={() => {setError(null); handleRunMultiAssetBacktest();}}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest}
               className="px-3 py-2 sm:px-4 bg-teal-600 hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-800 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1 sm:space-x-2 hover:scale-105 hover:brightness-110 transform"
-              title={`Executar Backtest SMC de ${BACKTEST_PERIOD_DAYS} Dias para Todos os Ativos (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
+              title={`Executar Backtest SMC M15 de ${BACKTEST_PERIOD_DAYS} Dias para Todos os Ativos (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
             >
               <ListBulletIcon className={`w-5 h-5 ${isPerformingMultiBacktest ? 'animate-pulse' : ''}`} />
-              <span className="hidden sm:inline">{isPerformingMultiBacktest ? 'Testando Todos...' : `BT Todos SMC (${BACKTEST_PERIOD_DAYS}d)`}</span>
-              <span className="sm:hidden text-xs">{isPerformingMultiBacktest ? '...' : `BT Todos SMC (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="hidden sm:inline">{isPerformingMultiBacktest ? 'Testando Todos...' : `BT Todos SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="sm:hidden text-xs">{isPerformingMultiBacktest ? '...' : `BT Todos SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
             </button>
             <button
               onClick={toggleDarkMode}
@@ -1007,17 +1008,17 @@ const App: React.FC = () => {
         <div className="flex-grow bg-surface-light dark:bg-surface-dark p-1 sm:p-2 rounded-lg shadow-xl dark:shadow-black/30 border border-gray-300 dark:border-gray-600 overflow-y-auto max-h-[calc(100vh-160px)] lg:max-h-[calc(100vh-120px)]">
           {(isLoading && !analysisReport && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest) && (
             <div className="flex flex-col items-center justify-center h-full">
-              <LoadingSpinner size="lg" text={`Analisando ${getSelectedAsset()?.name || 'ativo'} (SMC)...`} />
+              <LoadingSpinner size="lg" text={`Analisando ${getSelectedAsset()?.name || 'ativo'} (SMC M15)...`} />
             </div>
           )}
           {isPerformingBacktest && !analysisReport?.strategyBacktestResult && (
               <div className="flex flex-col items-center justify-center h-full">
-              <LoadingSpinner size="lg" text={`Executando backtest SMC de ${BACKTEST_PERIOD_DAYS} dias para ${getSelectedAsset()?.name || 'ativo'}...`} />
+              <LoadingSpinner size="lg" text={`Executando backtest SMC M15 de ${BACKTEST_PERIOD_DAYS} dias para ${getSelectedAsset()?.name || 'ativo'}...`} />
             </div>
           )}
           {(isScanning || isPerformingMultiBacktest) && !analysisReport && (
               <div className="flex flex-col items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4">
-                <LoadingSpinner size="lg" text={isScanning ? "Varredura SMC em progresso..." : "Backtest SMC de múltiplos ativos em progresso..."} />
+                <LoadingSpinner size="lg" text={isScanning ? "Varredura SMC M15 em progresso..." : "Backtest SMC M15 de múltiplos ativos em progresso..."} />
                 <p className="mt-2 text-sm">A análise do ativo com sinal (ou primeiro ativo do multi-backtest) aparecerá aqui.</p>
               </div>
           )}
@@ -1036,13 +1037,13 @@ const App: React.FC = () => {
           )}
           {!isLoading && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest && !error && !analysisReport && (
             <div className="flex items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4 text-center">
-              <p>O relatório de análise SMC aparecerá aqui. Selecione um ativo e clique em "Analisar SMC", "Scan All SMC" ou um dos botões de "Backtest SMC".</p>
+              <p>O relatório de análise SMC (M15) aparecerá aqui. Selecione um ativo e clique em "Analisar SMC (M15)", "Scan All SMC (M15)" ou um dos botões de "Backtest SMC M15".</p>
             </div>
           )}
         </div>
       </main>
       <footer className="text-center p-3 text-xs text-text_secondary-light dark:text_text_secondary-dark border-t border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark">
-        Fiscal Cripto SMC | Aviso: Apenas para fins educacionais. Não é aconselhamento financeiro.
+        Fiscal Cripto SMC (M15) | Aviso: Apenas para fins educacionais. Não é aconselhamento financeiro.
       </footer>
     </div>
   );

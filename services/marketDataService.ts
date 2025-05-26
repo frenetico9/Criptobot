@@ -3,29 +3,47 @@ import { Candle, AssetType } from '../types';
 import { CANDLE_DURATION_MINUTES, MASTER_ASSET_LIST, BINANCE_MAX_KLINE_LIMIT_PER_REQUEST, NUM_CANDLES_TO_FETCH } from '../constants';
 
 const assetToBinanceSymbolMap: Record<string, string> = {
-  // Kept Assets
-  'DOGE-USD': 'DOGEUSDT',
-  'NEAR-USD': 'NEARUSDT',
-  'ALGO-USD': 'ALGOUSDT',
-  'XRP-USD': 'XRPUSDT',
-  'ATOM-USD': 'ATOMUSDT',
-  'SAND-USD': 'SANDUSDT',
+  // Original 30 assets for M15
+  'BTC-USD': 'BTCUSDT',
+  'ETH-USD': 'ETHUSDT',
+  'SOL-USD': 'SOLUSDT',
   'ADA-USD': 'ADAUSDT',
-  'ICP-USD': 'ICPUSDT',
-  // Added Memecoins
+  'XRP-USD': 'XRPUSDT',
+  'DOT-USD': 'DOTUSDT',
+  'DOGE-USD': 'DOGEUSDT',
+  'AVAX-USD': 'AVAXUSDT',
+  'LINK-USD': 'LINKUSDT',
+  'MATIC-USD': 'MATICUSDT',
+  'LTC-USD': 'LTCUSDT',
   'SHIB-USD': 'SHIBUSDT',
+  'TRX-USD': 'TRXUSDT',
+  'UNI-USD': 'UNIUSDT',
+  'BCH-USD': 'BCHUSDT',
+  'XLM-USD': 'XLMUSDT',
+  'NEAR-USD': 'NEARUSDT',
+  'FIL-USD': 'FILUSDT',
+  'ICP-USD': 'ICPUSDT',
+  'APT-USD': 'APTUSDT',
+  'ARB-USD': 'ARBUSDT',
+  'OP-USD': 'OPUSDT',
+  'TON-USD': 'TONUSDT',
+  'ATOM-USD': 'ATOMUSDT',
+  'ETC-USD': 'ETCUSDT',
+  'VET-USD': 'VETUSDT',
+  'HBAR-USD': 'HBARUSDT',
+  'ALGO-USD': 'ALGOUSDT',
+  'XTZ-USD': 'XTZUSDT',
+  'SAND-USD': 'SANDUSDT',
+  // New Memecoins
   'PEPE-USD': 'PEPEUSDT',
   'WIF-USD': 'WIFUSDT',
   'BONK-USD': 'BONKUSDT',
   'FLOKI-USD': 'FLOKIUSDT',
-  'MEME-USD': 'MEMEUSDT',
+  'MEME-USD': 'MEMEUSDT', // Assuming MEME is the ticker for Memecoin
   'BOME-USD': 'BOMEUSDT',
   'TURBO-USD': 'TURBOUSDT',
   'COQ-USD': 'COQUSDT',
   'MYRO-USD': 'MYROUSDT',
-  // Removed assets (examples, ensure all not in the new MASTER_ASSET_LIST are removed)
-  // 'BTC-USD': 'BTCUSDT', (Example of a removed asset)
-  // 'ETH-USD': 'ETHUSDT', (Example of a removed asset)
 };
 
 const mapAssetIdToBinanceSymbol = (assetId: string): string | null => {
@@ -36,11 +54,11 @@ const mapIntervalToString = (intervalMinutes: number): string => {
   if (intervalMinutes === 1) return '1m';
   if (intervalMinutes === 3) return '3m';
   if (intervalMinutes === 5) return '5m';
-  if (intervalMinutes === 15) return '15m';
+  if (intervalMinutes === 15) return '15m'; // Ensure M15 is mapped
   if (intervalMinutes === 30) return '30m';
   if (intervalMinutes === 60) return '1h';
   // Add more intervals if needed, up to '1M' (monthly)
-  return '15m'; // Default
+  return '15m'; // Default to 15m if CANDLE_DURATION_MINUTES is 15
 }
 
 const transformBinanceKline = (kline: any[]): Candle => ({

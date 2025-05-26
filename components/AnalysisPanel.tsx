@@ -2,7 +2,8 @@
 import React from 'react';
 import { AnalysisReport, Candle, FVG, SwingPoint, TradeSignalType, TechnicalIndicators, StrategyBacktestResult, MarketStructurePoint, OrderBlock, InducementPoint, SmcAnalysis, KillzoneSession } from '../types';
 import { ArrowDownIcon, ArrowUpIcon, MinusSmallIcon, SparklesIcon, DownloadIcon, ClockIcon } from './icons'; // Added ClockIcon
-import { EMA_TREND_PERIOD, EMA_SHORT_PERIOD_DISPLAY, EMA_LONG_PERIOD_DISPLAY, SMC_STRATEGY_MIN_RR_RATIO } from '../constants';
+// FIX: Import BACKTEST_PERIOD_DAYS from constants
+import { EMA_TREND_PERIOD, EMA_SHORT_PERIOD_DISPLAY, EMA_LONG_PERIOD_DISPLAY, SMC_STRATEGY_MIN_RR_RATIO, BACKTEST_PERIOD_DAYS } from '../constants';
 import { generatePdfReport, generateBacktestPdfReport } from '../services/pdfGenerator'; 
 import { formatPrice as utilFormatPrice } from '../utils/formatters';
 
@@ -229,57 +230,61 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
                 className="mt-3 w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 text-sm"
                 title="Baixar Relatório de Análise Individual em PDF"
             >
-                <DownloadIcon className="w-4 h-4" />
-                <span>Baixar Relatório da Análise</span>
+                <DownloadIcon /> <span>Baixar Análise</span>
             </button>
-        )}
-
-        {finalSignal.details.length > 0 && (
-            <div className="mt-2">
-                <p className="text-xs font-semibold text-text_primary-light dark:text-text_primary-dark">Contexto e Detalhes:</p>
-                <ul className="list-disc list-inside text-xs text-text_secondary-light dark:text-text_secondary-dark space-y-0.5">
-                    {finalSignal.details.map((detail, i) => {
-                        let itemStyle = {};
-                        if (detail.toLowerCase().includes('killzone') && (detail.includes('LONDON') || detail.includes('NEWYORK'))) itemStyle = { color: 'var(--tw-color-primary)'}; 
-                        if (detail.toLowerCase().includes('varrido ✓')) itemStyle = { color: 'var(--tw-color-success)'};
-                        if (detail.toLowerCase().includes('aguardando x')) itemStyle = { color: 'var(--tw-color-warning)'};
-                        
-                        return <li key={i} style={itemStyle}>{detail}</li>;
-                    })}
-                </ul>
-            </div>
-        )}
-        {finalSignal.entry && (
-          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-1">
-            <KeyValue label="Entrada Sugerida" value={formatPrice(finalSignal.entry, asset)} valueClassName="font-bold text-blue-600 dark:text-blue-400" />
-            <KeyValue label="Stop Loss Sugerido" value={formatPrice(finalSignal.stopLoss, asset)} valueClassName="font-bold text-red-600 dark:text-red-400" />
-            <KeyValue label="Take Profit Sugerido" value={formatPrice(finalSignal.takeProfit, asset)} valueClassName="font-bold text-green-600 dark:text-green-400" />
-            <KeyValue label="Fonte Níveis" value={finalSignal.levelsSource || 'N/D'} className="text-xs" valueClassName="italic text-text_secondary-light dark:text_text_secondary-dark"/>
-            <KeyValue label="Risco/Retorno Alvo" value={`1:${SMC_STRATEGY_MIN_RR_RATIO.toFixed(1)}`} className="text-xs" />
-          </div>
         )}
       </Section>
 
+      {(finalSignal.type !== 'NEUTRO' && finalSignal.type !== 'ERRO') && (
+        <Section title="Níveis de Negociação Sugeridos (SMC)">
+          {finalSignal.entry !== undefined ? (
+            <KeyValue label="Entrada Sugerida" value={formatPrice(finalSignal.entry, asset)} valueClassName="font-bold text-blue-600 dark:text-blue-400" />
+          ) : (
+             <KeyValue label="Entrada Sugerida" value="Aguardando mitigação do POI" valueClassName="font-bold text-blue-600 dark:text-blue-400" />
+          )}
+          {finalSignal.poiUsed && (
+            <KeyValue 
+                label={`POI Alvo (${finalSignal.poiUsed.type} ${'startIndex' in finalSignal.poiUsed ? 'FVG' : 'OB'})`}
+                value={`De ${formatPrice(finalSignal.poiUsed.bottom, asset)} a ${formatPrice(finalSignal.poiUsed.top, asset)}`}
+                valueClassName={finalSignal.poiUsed.type === 'bullish' ? 'text-blue-500' : 'text-purple-500'}
+            />
+          )}
+          <KeyValue label="Stop Loss Sugerido" value={formatPrice(finalSignal.stopLoss, asset)} valueClassName="font-bold text-danger" />
+          <KeyValue label="Take Profit Sugerido" value={formatPrice(finalSignal.takeProfit, asset)} valueClassName="font-bold text-success" />
+          <KeyValue label="Fonte dos Níveis" value={finalSignal.levelsSource || 'Estratégia SMC'} />
+          <KeyValue label="Risco/Retorno Mínimo" value={`1:${SMC_STRATEGY_MIN_RR_RATIO.toFixed(1)}`} />
+        </Section>
+      )}
+
+      <Section title="Análise Detalhada SMC/ICT">
+        {renderSMC(smcAnalysis, asset)}
+      </Section>
+
+      <Section title="Contexto Técnico Geral">
+        {renderTAContext(technicalIndicators, asset)}
+      </Section>
+
+      {lastCandle && (
+          <Section title="Dados da Última Vela Analisada">
+              {renderLastCandle(lastCandle, asset)}
+          </Section>
+      )}
+
       {strategyBacktestResult && (
-        <Section title={`Backtest da Estratégia SMC (${strategyBacktestResult.periodDays} Dias)`}>
+        <Section title={`Resultado do Backtest da Estratégia SMC (${BACKTEST_PERIOD_DAYS} Dias)`}>
             {renderStrategyBacktestResult(strategyBacktestResult, asset)}
-            {strategyBacktestResult.trades && strategyBacktestResult.trades.length > 0 && (
-                 <button
+             {strategyBacktestResult.trades.length > 0 && (
+                <button
                     onClick={handleDownloadBacktestPdf}
                     disabled={isLoading || isScanning || isPerformingBacktest}
-                    className="mt-4 w-full px-4 py-2 bg-indigo-500 hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 text-sm"
-                    title="Baixar Relatório Detalhado de Backtest em PDF"
+                    className="mt-3 w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-800 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 text-sm"
+                    title="Baixar Relatório de Backtest em PDF"
                 >
-                    <DownloadIcon className="w-4 h-4" />
-                    <span>Baixar PDF do Backtest Detalhado</span>
+                    <DownloadIcon /> <span>Baixar Relatório de Backtest</span>
                 </button>
             )}
         </Section>
       )}
-      
-      <Section title="Análise Detalhada SMC/ICT">{renderSMC(smcAnalysis, asset)}</Section>
-      <Section title="Dados da Vela Atual">{renderLastCandle(lastCandle, asset)}</Section>
-      <Section title="Contexto Técnico Geral (Indicadores)">{renderTAContext(technicalIndicators, asset)}</Section>
 
     </div>
   );

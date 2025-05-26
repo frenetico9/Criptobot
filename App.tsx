@@ -228,24 +228,25 @@ const App: React.FC = () => {
     }
 
     // Try to restore/process pending signal first
-    if (lastPendingSignalRef.current && lastPendingSignalRef.current.type === 'AGUARDANDO_ENTRADA' && lastPendingSignalRef.current.poiUsed) {
-        const pendingPOI = lastPendingSignalRef.current.poiUsed;
+    const pendingSignalSource = isBacktest ? (currentAssetIdForLog as any).localPendingSignalForBacktest : lastPendingSignalRef.current;
+
+    if (pendingSignalSource && pendingSignalSource.type === 'AGUARDANDO_ENTRADA' && pendingSignalSource.poiUsed) {
+        const pendingPOI = pendingSignalSource.poiUsed;
         let mitigatedThisCandle = false;
         let entryPriceThisCandle: number | undefined;
 
-        // Check if the underlying MSS for the pending POI is still the most recent one
-        const mssForPending = marketStructurePoints.find(ms => ms.index === lastPendingSignalRef.current?.poiUsed?.['relatedMSSIndexIfAvailable']);
+        const mssForPending = marketStructurePoints.find(ms => ms.index === (pendingPOI as any).relatedMSSIndexIfAvailable);
+
         if (mssForPending && lastMSS && mssForPending.index !== lastMSS.index && lastMSS.direction !== mssForPending.direction) {
-            // console.log(`[${currentAssetIdForLog}] Pending POI's MSS invalidated by new MSS. Clearing pending.`);
             details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (nova MSS oposta).`);
-            lastPendingSignalRef.current = null;
+             if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
         } else {
-            if (pendingPOI.type === 'bullish') { // POI is bullish, expect BUY
+            if (pendingPOI.type === 'bullish') { 
                 if (currentCandle.low <= pendingPOI.top && currentCandle.high >= pendingPOI.bottom) { 
                     mitigatedThisCandle = true;
                     entryPriceThisCandle = Math.min(currentCandle.open, pendingPOI.top); 
                 }
-            } else { // POI is bearish, expect SELL
+            } else { 
                 if (currentCandle.high >= pendingPOI.bottom && currentCandle.low <= pendingPOI.top) {
                     mitigatedThisCandle = true;
                     entryPriceThisCandle = Math.max(currentCandle.open, pendingPOI.bottom);
@@ -253,30 +254,27 @@ const App: React.FC = () => {
             }
 
             if (mitigatedThisCandle && entryPriceThisCandle !== undefined) {
-                // console.log(`[${currentAssetIdForLog}] Pending POI ${pendingPOI.type} triggered entry @ ${entryPriceThisCandle.toFixed(4)}.`);
                 signalType = pendingPOI.type === 'bullish' ? 'COMPRA' : 'VENDA';
                 entry = entryPriceThisCandle;
-                stopLoss = lastPendingSignalRef.current.stopLoss;
-                takeProfit = lastPendingSignalRef.current.takeProfit;
-                levelsSource = lastPendingSignalRef.current.levelsSource?.replace(" (Pendente)", " (Acionado)") || "SMC Acionado";
+                stopLoss = pendingSignalSource.stopLoss;
+                takeProfit = pendingSignalSource.takeProfit;
+                levelsSource = pendingSignalSource.levelsSource?.replace(" (Pendente)", " (Acionado)") || "SMC Acionado";
                 justifications.push(`Entrada no POI pendente (${pendingPOI.type} ${'startIndex' in pendingPOI ? 'FVG' : 'OB'} @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}) mitigado.`);
-                details.push(...(lastPendingSignalRef.current.details || []).filter(d => !d.startsWith("Aguardando mitigação")));
+                details.push(...(pendingSignalSource.details || []).filter(d => !d.startsWith("Aguardando mitigação")));
                 confidenceScoreValue = killzone !== 'NONE' ? 'ALTA' : 'MÉDIA';
                 poiUsedForSignal = pendingPOI;
-                lastPendingSignalRef.current = null; 
+                if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
             } else if ( (pendingPOI.type === 'bullish' && currentCandle.low < pendingPOI.bottom - (currentAtrVal * 0.5)) ||
                         (pendingPOI.type === 'bearish' && currentCandle.high > pendingPOI.top + (currentAtrVal * 0.5)) ) {
-                // console.log(`[${currentAssetIdForLog}] Pending POI invalidated (price moved too far past). POI: ${pendingPOI.bottom}-${pendingPOI.top}, Candle Low/High: ${currentCandle.low}/${currentCandle.high}`);
                 details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (preço passou).`);
-                lastPendingSignalRef.current = null;
+                if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
             } else {
-                // Still waiting for POI mitigation from pending signal
                  details.push(`Ainda aguardando mitigação do POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}.`);
-                // console.log(`[${currentAssetIdForLog}] Still waiting for pending POI mitigation.`);
-                return { ...lastPendingSignalRef.current, details }; // Keep returning AGUARDANDO_ENTRADA
+                return { ...pendingSignalSource, details }; 
             }
         }
     }
+
 
     // If no pending signal was triggered, or it was cleared, look for new setups
     if (lastMSS && idmRelevantToLastMSS?.isSwept && signalType === 'NEUTRO') {
@@ -317,9 +315,8 @@ const App: React.FC = () => {
 
                 const assetConfig = getSelectedAsset(currentAssetIdForLog);
                 const assetNameForSL = assetConfig?.name || currentAssetIdForLog || "ASSET";
-                // Simplified pip buffer for example, ideally use more precise pip calculation based on asset
                 const pipsValue = assetNameForSL.toLowerCase().includes("btc") ? 1 : assetNameForSL.toLowerCase().includes("eth") ? 0.1 : 0.0005;
-                const slBuffer = Math.max(currentAtrVal * 0.05, pipsValue * SMC_SL_BUFFER_PIPS_FACTOR * 10); // Small buffer
+                const slBuffer = Math.max(currentAtrVal * 0.05, pipsValue * SMC_SL_BUFFER_PIPS_FACTOR * 10); 
 
 
                 if (mitigatedThisCandle && entry !== undefined) {
@@ -351,13 +348,14 @@ const App: React.FC = () => {
                     } else {
                          stopLoss = ('startIndex' in selectedPOI ? historicalCandles[selectedPOI.startIndex].high : selectedPOI.top) + (currentAtrVal * SMC_SL_ATR_MULTIPLIER) + slBuffer;
                     }
-                    if (stopLoss && tempEntryForSLTP) { // Check if stopLoss is valid before calculating TP
+                    if (stopLoss && tempEntryForSLTP) { 
                         takeProfit = tempEntryForSLTP + (tempEntryForSLTP - stopLoss) * (selectedPOI.type === 'bullish' ? 1 : -1) * SMC_STRATEGY_MIN_RR_RATIO;
                     } else {
-                        takeProfit = undefined; // Cannot calculate TP if SL is undefined
+                        takeProfit = undefined; 
                     }
                     levelsSource = `SMC: ${lastMSS.type} > IDM Sweep > POI (Pendente)`;
-                    lastPendingSignalRef.current = { type: signalType, details, justification: justifications.join('\n'), entry: tempEntryForSLTP, stopLoss, takeProfit, levelsSource, poiUsed: selectedPOI, confidenceScore: confidenceScoreValue, killzone};
+                    const pendingSignalToSet = { type: signalType, details, justification: justifications.join('\n'), entry: tempEntryForSLTP, stopLoss, takeProfit, levelsSource, poiUsed: selectedPOI, confidenceScore: confidenceScoreValue, killzone};
+                    if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = pendingSignalToSet; else lastPendingSignalRef.current = pendingSignalToSet;
                 }
             }
         } else {
@@ -418,8 +416,7 @@ const App: React.FC = () => {
           }
       }
       
-      // Update smcResult with POIs identified by processSignalLogic for display
-      const anSmcResultCopy = {...smcResult}; // Operate on a copy
+      const anSmcResultCopy = {...smcResult}; 
       if (finalSignal.poiUsed) {
         if (finalSignal.poiUsed.type === 'bullish') {
             anSmcResultCopy.potentialBullishPOIs = [finalSignal.poiUsed];
@@ -520,13 +517,11 @@ const App: React.FC = () => {
             trades: [], summaryMessage: "Erro: Ativo não encontrado.", error: "Ativo não encontrado."
         };
     }
-
-    const backtestTrades: BacktestTrade[] = [];
+    
     let currentCapitalBRL = initialCapital;
     let peakCapitalBRL = initialCapital;
     let maxDrawdownBRL = 0;
     
-    let totalPnlPoints = 0;
     let winningTrades = 0;
     let losingTrades = 0;
     let totalTradesAttempted = 0;
@@ -535,7 +530,8 @@ const App: React.FC = () => {
     let grossProfitPoints = 0;
     let grossLossPoints = 0;
     
-    let localPendingSignalForBacktest: TradeSignal | null = null;
+    const backtestContext = { localPendingSignalForBacktest: null as TradeSignal | null, assetId: assetIdForBacktest };
+
 
     const candlesPerDay = (24 * 60) / CANDLE_DURATION_MINUTES;
     const totalCandlesForThisPeriod = periodDays * candlesPerDay;
@@ -550,6 +546,8 @@ const App: React.FC = () => {
       
       const backtestPeriodStartDate = allFetchedCandles[BACKTEST_INDICATOR_BUFFER_CANDLES].date;
       const backtestPeriodEndDate = allFetchedCandles[allFetchedCandles.length - 1].date;
+      const backtestTrades: BacktestTrade[] = [];
+
 
       for (let i = BACKTEST_INDICATOR_BUFFER_CANDLES; i < allFetchedCandles.length; i++) {
         const currentSignalCandle = allFetchedCandles[i];
@@ -558,54 +556,19 @@ const App: React.FC = () => {
         const indicatorsForSignal = calculateAllIndicators(dataForSignalGen);
         const smcForSignal = analyzeSMC(dataForSignalGen, indicatorsForSignal);
         
+        // Pass backtestContext (which is an object that can be mutated) to processSignalLogic
+        const liveSignal = processSignalLogic(dataForSignalGen, indicatorsForSignal, smcForSignal, true, backtestContext as any);
+        
         let tradeSignalToExecute: TradeSignal | null = null;
 
-        if (localPendingSignalForBacktest && localPendingSignalForBacktest.type === 'AGUARDANDO_ENTRADA' && localPendingSignalForBacktest.poiUsed) {
-            const pendingPOI = localPendingSignalForBacktest.poiUsed;
-            let mitigatedThisCandle = false;
-            let entryPriceThisCandle: number | undefined;
-            const currentAtrForPending = indicatorsForSignal.atr?.[i] || 0.0001;
-
-
-            const mssForPending = smcForSignal.marketStructurePoints.find(ms => ms.index === (pendingPOI as any).relatedMSSIndexIfAvailable);
-            if (mssForPending && smcForSignal.lastMSS && mssForPending.index !== smcForSignal.lastMSS.index && smcForSignal.lastMSS.direction !== mssForPending.direction) {
-                 localPendingSignalForBacktest = null; // Invalidate pending
-            } else {
-                if (pendingPOI.type === 'bullish') {
-                    if (currentSignalCandle.low <= pendingPOI.top && currentSignalCandle.high >= pendingPOI.bottom) {
-                        mitigatedThisCandle = true; entryPriceThisCandle = Math.min(currentSignalCandle.open, pendingPOI.top);
-                    }
-                } else { 
-                    if (currentSignalCandle.high >= pendingPOI.bottom && currentSignalCandle.low <= pendingPOI.top) {
-                        mitigatedThisCandle = true; entryPriceThisCandle = Math.max(currentSignalCandle.open, pendingPOI.bottom);
-                    }
-                }
-
-                if (mitigatedThisCandle && entryPriceThisCandle !== undefined) {
-                    tradeSignalToExecute = {
-                        ...localPendingSignalForBacktest, type: pendingPOI.type === 'bullish' ? 'COMPRA' : 'VENDA',
-                        entry: entryPriceThisCandle,
-                    };
-                    localPendingSignalForBacktest = null; 
-                } else if ((pendingPOI.type === 'bullish' && currentSignalCandle.low < pendingPOI.bottom - (currentAtrForPending * 0.5)) ||
-                           (pendingPOI.type === 'bearish' && currentSignalCandle.high > pendingPOI.top + (currentAtrForPending * 0.5))) {
-                    localPendingSignalForBacktest = null;
-                }
-            }
-        }
-        
-        if (!tradeSignalToExecute) { // If pending wasn't triggered, run full logic for current candle
-            const liveSignal = processSignalLogic(dataForSignalGen, indicatorsForSignal, smcForSignal, true, assetIdForBacktest);
-            if (liveSignal.type === 'AGUARDANDO_ENTRADA' && liveSignal.poiUsed) {
-                localPendingSignalForBacktest = liveSignal; 
-            } else if (liveSignal.type === 'COMPRA' || liveSignal.type === 'VENDA') {
-                tradeSignalToExecute = liveSignal;
-            } else if (liveSignal.type !== 'NEUTRO' && liveSignal.type !== 'ERRO') {
-                 totalTradesAttempted++; totalTradesIgnored++; 
-            }
+        if (liveSignal.type === 'COMPRA' || liveSignal.type === 'VENDA') {
+            tradeSignalToExecute = liveSignal;
+        } else if (liveSignal.type !== 'NEUTRO' && liveSignal.type !== 'ERRO' && liveSignal.type !== 'AGUARDANDO_ENTRADA') {
+             totalTradesAttempted++; totalTradesIgnored++; 
         }
 
-        if (tradeSignalToExecute && handleTradeExecution(tradeSignalToExecute, currentSignalCandle, allFetchedCandles, i)) {
+
+        if (tradeSignalToExecute && handleTradeExecution(tradeSignalToExecute, currentSignalCandle, allFetchedCandles, i, backtestTrades)) {
             // Trade processed (executed or ignored due to capital etc.)
         }
 
@@ -615,11 +578,12 @@ const App: React.FC = () => {
         tradeSignal: TradeSignal, 
         signalCandle: Candle, 
         allCandles: Candle[], 
-        signalCandleIndex: number
+        signalCandleIndex: number,
+        tradesArray: BacktestTrade[]
       ): boolean { 
         if (!tradeSignal.entry || !tradeSignal.stopLoss || !tradeSignal.takeProfit) {
             totalTradesAttempted++; totalTradesIgnored++;
-            backtestTrades.push({
+            tradesArray.push({
                 assetId: assetIdForBacktest, signalCandleDate: signalCandle.date,
                 signalType: tradeSignal.type.includes('COMPRA') ? 'COMPRA' : 'VENDA',
                 entryDate: signalCandle.date, entryPrice: 0, stopLossPrice: 0, takeProfitPrice: 0,
@@ -632,7 +596,7 @@ const App: React.FC = () => {
 
         if (currentCapitalBRL < riskPerTrade) {
             totalTradesIgnored++;
-            backtestTrades.push({ 
+            tradesArray.push({ 
                 assetId: assetIdForBacktest, signalCandleDate: signalCandle.date,
                 signalType: tradeSignal.type.includes('COMPRA') ? 'COMPRA' : 'VENDA',
                 entryDate: signalCandle.date, entryPrice: tradeSignal.entry,
@@ -698,22 +662,20 @@ const App: React.FC = () => {
                 pnlForThisTradeBRL = riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO;
             } else if (backtestTrade.result === 'LOSS') {
                 pnlForThisTradeBRL = -riskPerTrade;
-            } else { // End of period, PnL based on points
+            } else { 
                 const pointsToSL = Math.abs(backtestTrade.entryPrice - backtestTrade.stopLossPrice);
                 if (pointsToSL > 0.0000001) {
                     const pnlRatioToRisk = backtestTrade.pnlPoints / pointsToSL;
                     pnlForThisTradeBRL = pnlRatioToRisk * riskPerTrade;
-                    // Cap win/loss if it's end of period
                     pnlForThisTradeBRL = Math.min(pnlForThisTradeBRL, riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO);
                     pnlForThisTradeBRL = Math.max(pnlForThisTradeBRL, -riskPerTrade);
                 } else {
-                    pnlForThisTradeBRL = 0; // Should not happen with proper SL
+                    pnlForThisTradeBRL = 0; 
                 }
             }
             
             backtestTrade.pnlBRL = pnlForThisTradeBRL;
             currentCapitalBRL += pnlForThisTradeBRL;
-            // totalPnlBRL += pnlForThisTradeBRL; // This will be sum of backtestTrade.pnlBRL later
             backtestTrade.capitalAfterTrade = currentCapitalBRL;
 
             peakCapitalBRL = Math.max(peakCapitalBRL, currentCapitalBRL);
@@ -728,7 +690,7 @@ const App: React.FC = () => {
                  backtestTrade.result = backtestTrade.pnlBRL > 0 ? 'WIN' : (backtestTrade.pnlBRL < 0 ? 'LOSS' : 'OPEN');
             }
         }
-        backtestTrades.push(backtestTrade);
+        tradesArray.push(backtestTrade);
         return true; 
       }
 
@@ -854,49 +816,72 @@ const App: React.FC = () => {
   const handleScanAllAssets = useCallback(async () => {
     setError(null);
     setIsScanning(true);
-    setAnalysisReport(null); 
+    setAnalysisReport(null);
     setChartData([]);
     scannerStopFlag.current = false;
     let strongSignalFound = false;
-    lastPendingSignalRef.current = null; 
+    lastPendingSignalRef.current = null;
 
     const assetsToScan = MASTER_ASSET_LIST.filter(asset => asset.type === AssetType.CRYPTO);
 
-    for (let i = 0; i < assetsToScan.length; i++) {
-      if (scannerStopFlag.current) {
-        setScanProgress(prev => `${prev}\nVarredura SMC interrompida.`);
-        break;
-      }
-      const asset = assetsToScan[i];
-      setScanProgress(`Varrendo ${asset.name} (${i + 1}/${assetsToScan.length}) com estratégia SMC...`);
+    while (!scannerStopFlag.current && !strongSignalFound) {
+        setScanProgress(`Iniciando nova varredura completa SMC (${assetsToScan.length} ativos)... Buscando sinal forte...`);
+        await new Promise(resolve => setTimeout(resolve, 500)); // Small delay before starting a full pass
 
-      await new Promise(resolve => setTimeout(resolve, SCAN_UPDATE_INTERVAL_MS)); 
+        for (let i = 0; i < assetsToScan.length; i++) {
+            if (scannerStopFlag.current) {
+                setScanProgress(prev => `${prev}\nVarredura SMC interrompida pelo usuário.`);
+                break; 
+            }
+            const asset = assetsToScan[i];
+            setScanProgress(`Varrendo ${asset.name} (${i + 1}/${assetsToScan.length}) com estratégia SMC...`);
 
-      const report = await performSingleAnalysis(asset.id);
+            await new Promise(resolve => setTimeout(resolve, SCAN_UPDATE_INTERVAL_MS));
 
-      if (report && report.finalSignal) {
-        if (report.finalSignal.type.includes('FORTE') || 
-            (report.finalSignal.type === 'COMPRA' || report.finalSignal.type === 'VENDA') && report.finalSignal.confidenceScore === 'ALTA' ||
-            report.finalSignal.type === 'AGUARDANDO_ENTRADA' && report.finalSignal.confidenceScore !== 'BAIXA'
-           ) {
-          setScanProgress(`SINAL SMC (${report.finalSignal.type}) encontrado/pendente para ${asset.name}! Carregando detalhes...`);
-          await runAnalysis(asset.id); 
-          strongSignalFound = true;
-          break; 
+            const report = await performSingleAnalysis(asset.id);
+
+            if (report && report.finalSignal) {
+                const isStrongSignal = report.finalSignal.type.includes('FORTE') ||
+                    ((report.finalSignal.type === 'COMPRA' || report.finalSignal.type === 'VENDA') && report.finalSignal.confidenceScore === 'ALTA') ||
+                    (report.finalSignal.type === 'AGUARDANDO_ENTRADA' && report.finalSignal.confidenceScore !== 'BAIXA');
+
+                if (isStrongSignal) {
+                    setScanProgress(`SINAL FORTE SMC (${report.finalSignal.type}) encontrado/pendente para ${asset.name}! Carregando detalhes...`);
+                    await runAnalysis(asset.id);
+                    strongSignalFound = true;
+                    break; 
+                }
+            }
+            if (i < assetsToScan.length - 1 && !scannerStopFlag.current && !strongSignalFound) {
+                await new Promise(resolve => setTimeout(resolve, SCANNER_API_DELAY_MS));
+            }
+        } 
+
+        if (scannerStopFlag.current) {
+            break;
         }
-      }
-      if (i < assetsToScan.length -1 && !scannerStopFlag.current) { 
-         await new Promise(resolve => setTimeout(resolve, SCANNER_API_DELAY_MS));
-      }
+
+        if (!strongSignalFound && !scannerStopFlag.current) {
+            setScanProgress(`Varredura SMC completa. Nenhum sinal forte encontrado nesta passagem. Reiniciando em alguns segundos...`);
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Delay before restarting the loop
+        }
     }
 
-    if (!strongSignalFound && !scannerStopFlag.current) {
-      setScanProgress(`Varredura SMC completa. Nenhum sinal forte/pendente de alta confiança encontrado em ${assetsToScan.length} ativos.`);
-    } else if (scannerStopFlag.current && !strongSignalFound){
-        setScanProgress(prev => `${prev}\nVarredura SMC interrompida antes de encontrar sinal forte ou completar.`);
+    if (strongSignalFound) {
+        setScanProgress(prev => `${prev}\nVarredura SMC interrompida: Sinal forte encontrado.`);
+    } else if (scannerStopFlag.current) {
+        // Message already set if stopped by user during inner loop.
+        // If outer loop breaks due to stopFlag, this sets final status.
+        if (!scanProgress.includes("interrompida pelo usuário")) { // Avoid duplicate message
+             setScanProgress(`Varredura SMC interrompida pelo usuário.`);
+        }
+    } else {
+        // This case implies the loop exited for an unexpected reason (e.g. assetsToScan is empty)
+        setScanProgress("Varredura SMC concluída (estado inesperado).");
     }
+
     setIsScanning(false);
-  }, [performSingleAnalysis, runAnalysis]);
+  }, [performSingleAnalysis, runAnalysis, scanProgress]);
 
   const stopScan = () => {
     scannerStopFlag.current = true;
@@ -946,7 +931,7 @@ const App: React.FC = () => {
                 ? 'bg-red-500 hover:bg-red-600 text-white'
                 : 'bg-green-500 dark:bg-green-600 hover:bg-green-600 dark:hover:bg-green-700 text-white'
               }`}
-              title={isScanning ? "Parar Varredura SMC" : "Iniciar Varredura SMC de Todos os Ativos"}
+              title={isScanning ? "Parar Varredura SMC" : "Iniciar Varredura Infinita SMC (até Sinal Forte)"}
             >
               <PlayCircleIcon className={`w-5 h-5 ${isScanning && !scannerStopFlag.current ? 'animate-ping' : ''}`} />
               <span className="hidden sm:inline">{isScanning ? (scannerStopFlag.current ? 'Parando...' : 'Parar Scan') : 'Scan All SMC'}</span>

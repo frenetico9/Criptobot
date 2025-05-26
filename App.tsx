@@ -150,14 +150,18 @@ const App: React.FC = () => {
 
   const toggleDarkMode = () => setIsDarkMode(prev => !prev);
 
-  const getSelectedAsset = (assetIdToGet?: string): Asset | undefined => MASTER_ASSET_LIST.find(a => a.id === (assetIdToGet || selectedAssetId));
+  const getSelectedAsset = useCallback((assetIdToGet?: string): Asset | undefined => {
+    return MASTER_ASSET_LIST.find(a => a.id === (assetIdToGet || selectedAssetId));
+  }, [selectedAssetId]);
 
-  const processSignalLogic = (
+
+  const processSignalLogic = useCallback((
     historicalCandles: Candle[],
     fullIndicators: TechnicalIndicators,
     smcData: SmcAnalysis, 
     isBacktest: boolean = false,
-    currentAssetIdForLog: string = "N/A" 
+    // currentAssetIdForLog when isBacktest=true is actually the backtestContext object.
+    currentAssetIdForLog: string | { assetId: string; localPendingSignalForBacktest: TradeSignal | null } = "N/A" 
   ): TradeSignal => {
     const details: string[] = [];
     let justifications: string[] = [];
@@ -169,12 +173,21 @@ const App: React.FC = () => {
     let confidenceScoreValue: SignalConfidence = 'BAIXA';
     let poiUsedForSignal: FVG | OrderBlock | undefined = undefined;
     
-    // console.log(`[${currentAssetIdForLog}] processSignalLogic START`);
+    let actualAssetIdString: string;
+    let mutablePendingSignalSource: { localPendingSignalForBacktest: TradeSignal | null } | null = null;
+
+    if (isBacktest && typeof currentAssetIdForLog === 'object' && currentAssetIdForLog !== null && 'assetId' in currentAssetIdForLog) {
+        actualAssetIdString = currentAssetIdForLog.assetId;
+        mutablePendingSignalSource = currentAssetIdForLog;
+    } else if (typeof currentAssetIdForLog === 'string') {
+        actualAssetIdString = currentAssetIdForLog;
+    } else {
+        actualAssetIdString = "N/A_ERROR_UNKNOWN_ASSET_ID_TYPE";
+    }
 
     const numCandles = historicalCandles.length;
     if (numCandles < Math.max(EMA_TREND_PERIOD, ATR_VOLATILITY_AVG_PERIOD, 50 /* min for SMC */)) { 
         justifications.push("Dados históricos insuficientes para aplicar estratégia SMC.");
-        // console.log(`[${currentAssetIdForLog}] Insufficient data: ${numCandles} candles.`);
         return { type: 'ERRO', details, justification: justifications.join('\n'), confidenceScore: 'N/D' };
     }
 
@@ -184,54 +197,44 @@ const App: React.FC = () => {
 
     if (!currentAtrVal || currentAtrVal <= 0) {
         justifications.push("ATR não disponível ou inválido para a vela atual.");
-        // console.log(`[${currentAssetIdForLog}] Invalid ATR: ${currentAtrVal}`);
         return { type: 'ERRO', details, justification: justifications.join('\n'), confidenceScore: 'N/D' };
     }
     
     const killzone = getCurrentKillzone(currentCandle.date);
     details.push(`Sessão Atual: ${killzone === 'NONE' ? 'Fora de Killzone Principal' : killzone + ' Killzone'}`);
-    // Not filtering strictly by killzone here, but using it for confidence.
 
     details.push(getGeneralLiquidityContext(currentCandle.date));
     details.push(getVolatilityContext(currentAtrVal, fullIndicators.atr));
     details.push(getTrendContext(currentCandle.close, fullIndicators.emaTrend?.[currentIdx], fullIndicators.emaTrend, currentIdx));
 
     const { marketStructurePoints, inducementPoints, orderBlocks, fvgs } = smcData;
-    // Use the last MSS from smcData which is already sorted by index
     const lastMSS = smcData.lastMSS; 
     
     let idmRelevantToLastMSS = smcData.lastInducement;
 
     if (lastMSS) {
-        // console.log(`[${currentAssetIdForLog}] Last MSS: ${lastMSS.type} ${lastMSS.direction} @ ${lastMSS.level.toFixed(4)} on ${lastMSS.date}`);
         details.push(`Última Estrutura: ${lastMSS.type} ${lastMSS.direction} @ ${lastMSS.level.toFixed(4)} (${new Date(lastMSS.date).toLocaleTimeString()})`);
         
-        // Ensure the IDM is indeed related to THIS lastMSS
         if (idmRelevantToLastMSS && idmRelevantToLastMSS.relatedMSS?.index !== lastMSS.index) {
             idmRelevantToLastMSS = inducementPoints.find(idm => idm.relatedMSS?.index === lastMSS.index && idm.relatedMSS?.direction === lastMSS.direction);
-            // console.log(`[${currentAssetIdForLog}] Corrected IDM for lastMSS. Found: ${!!idmRelevantToLastMSS}`);
         }
         
         if (idmRelevantToLastMSS) {
-            // console.log(`[${currentAssetIdForLog}] IDM for MSS: Level ${idmRelevantToLastMSS.level.toFixed(4)}, Type ${idmRelevantToLastMSS.type}, Swept: ${idmRelevantToLastMSS.isSwept}`);
             details.push(`Inducement (IDM) (${idmRelevantToLastMSS.type}) @ ${idmRelevantToLastMSS.level.toFixed(4)}. Swept: ${idmRelevantToLastMSS.isSwept ? 'SIM ✓' : 'NÃO X'}`);
             if (!idmRelevantToLastMSS.isSwept) {
                  details.push(`Aguardando varredura do IDM.`);
             }
         } else {
-            // console.log(`[${currentAssetIdForLog}] No relevant IDM found for the last MSS.`);
             details.push(`Nenhum Inducement (IDM) claro identificado após ${lastMSS.type}.`);
         }
     } else {
-        // console.log(`[${currentAssetIdForLog}] No recent MSS found.`);
         details.push("Nenhuma Quebra de Estrutura (MSS/BOS) recente clara identificada.");
     }
 
-    // Try to restore/process pending signal first
-    const pendingSignalSource = isBacktest ? (currentAssetIdForLog as any).localPendingSignalForBacktest : lastPendingSignalRef.current;
+    const pendingSignalSourceFromContext = isBacktest && mutablePendingSignalSource ? mutablePendingSignalSource.localPendingSignalForBacktest : lastPendingSignalRef.current;
 
-    if (pendingSignalSource && pendingSignalSource.type === 'AGUARDANDO_ENTRADA' && pendingSignalSource.poiUsed) {
-        const pendingPOI = pendingSignalSource.poiUsed;
+    if (pendingSignalSourceFromContext && pendingSignalSourceFromContext.type === 'AGUARDANDO_ENTRADA' && pendingSignalSourceFromContext.poiUsed) {
+        const pendingPOI = pendingSignalSourceFromContext.poiUsed;
         let mitigatedThisCandle = false;
         let entryPriceThisCandle: number | undefined;
 
@@ -239,7 +242,7 @@ const App: React.FC = () => {
 
         if (mssForPending && lastMSS && mssForPending.index !== lastMSS.index && lastMSS.direction !== mssForPending.direction) {
             details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (nova MSS oposta).`);
-             if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
+             if (isBacktest && mutablePendingSignalSource) mutablePendingSignalSource.localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
         } else {
             if (pendingPOI.type === 'bullish') { 
                 if (currentCandle.low <= pendingPOI.top && currentCandle.high >= pendingPOI.bottom) { 
@@ -256,54 +259,47 @@ const App: React.FC = () => {
             if (mitigatedThisCandle && entryPriceThisCandle !== undefined) {
                 signalType = pendingPOI.type === 'bullish' ? 'COMPRA' : 'VENDA';
                 entry = entryPriceThisCandle;
-                stopLoss = pendingSignalSource.stopLoss;
-                takeProfit = pendingSignalSource.takeProfit;
-                levelsSource = pendingSignalSource.levelsSource?.replace(" (Pendente)", " (Acionado)") || "SMC Acionado";
+                stopLoss = pendingSignalSourceFromContext.stopLoss;
+                takeProfit = pendingSignalSourceFromContext.takeProfit;
+                levelsSource = pendingSignalSourceFromContext.levelsSource?.replace(" (Pendente)", " (Acionado)") || "SMC Acionado";
                 justifications.push(`Entrada no POI pendente (${pendingPOI.type} ${'startIndex' in pendingPOI ? 'FVG' : 'OB'} @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}) mitigado.`);
-                details.push(...(pendingSignalSource.details || []).filter(d => !d.startsWith("Aguardando mitigação")));
+                details.push(...(pendingSignalSourceFromContext.details || []).filter(d => !d.startsWith("Aguardando mitigação")));
                 confidenceScoreValue = killzone !== 'NONE' ? 'ALTA' : 'MÉDIA';
                 poiUsedForSignal = pendingPOI;
-                if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
+                if (isBacktest && mutablePendingSignalSource) mutablePendingSignalSource.localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
             } else if ( (pendingPOI.type === 'bullish' && currentCandle.low < pendingPOI.bottom - (currentAtrVal * 0.5)) ||
                         (pendingPOI.type === 'bearish' && currentCandle.high > pendingPOI.top + (currentAtrVal * 0.5)) ) {
                 details.push(`POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)} invalidado (preço passou).`);
-                if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
+                if (isBacktest && mutablePendingSignalSource) mutablePendingSignalSource.localPendingSignalForBacktest = null; else lastPendingSignalRef.current = null;
             } else {
                  details.push(`Ainda aguardando mitigação do POI pendente @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}.`);
-                return { ...pendingSignalSource, details }; 
+                return { ...pendingSignalSourceFromContext, details }; 
             }
         }
     }
 
 
-    // If no pending signal was triggered, or it was cleared, look for new setups
     if (lastMSS && idmRelevantToLastMSS?.isSwept && signalType === 'NEUTRO') {
-        // console.log(`[${currentAssetIdForLog}] MSS confirmed and IDM swept. Looking for POIs.`);
         let potentialPOIs: (FVG | OrderBlock)[] = [];
-        if (lastMSS.direction === 'bullish') { // Bullish MSS, IDM (low) swept, look for Bullish POI *BELOW* IDM
+        if (lastMSS.direction === 'bullish') { 
             const unmitigatedBullishFVGs = fvgs.filter(fvg => fvg.type === 'bullish' && !fvg.isMitigated && fvg.bottom < idmRelevantToLastMSS!.level && fvg.startIndex > lastMSS.index);
             const unmitigatedBullishOBs = orderBlocks.filter(ob => ob.type === 'bullish' && !ob.isMitigated && ob.bottom < idmRelevantToLastMSS!.level && ob.index > lastMSS.index);
-            potentialPOIs = [...unmitigatedBullishFVGs, ...unmitigatedBullishOBs].sort((a,b) => a.bottom - b.bottom); // lowest POI first
-            // console.log(`[${currentAssetIdForLog}] Potential Bullish POIs below IDM ${idmRelevantToLastMSS!.level.toFixed(4)}: ${potentialPOIs.length}`);
-        } else { // Bearish MSS, IDM (high) swept, look for Bearish POI *ABOVE* IDM
+            potentialPOIs = [...unmitigatedBullishFVGs, ...unmitigatedBullishOBs].sort((a,b) => a.bottom - b.bottom); 
+        } else { 
             const unmitigatedBearishFVGs = fvgs.filter(fvg => fvg.type === 'bearish' && !fvg.isMitigated && fvg.top > idmRelevantToLastMSS!.level && fvg.startIndex > lastMSS.index);
             const unmitigatedBearishOBs = orderBlocks.filter(ob => ob.type === 'bearish' && !ob.isMitigated && ob.top > idmRelevantToLastMSS!.level && ob.index > lastMSS.index);
-            potentialPOIs = [...unmitigatedBearishFVGs, ...unmitigatedBearishOBs].sort((a,b) => b.top - a.top); // highest POI first
-            // console.log(`[${currentAssetIdForLog}] Potential Bearish POIs above IDM ${idmRelevantToLastMSS!.level.toFixed(4)}: ${potentialPOIs.length}`);
+            potentialPOIs = [...unmitigatedBearishFVGs, ...unmitigatedBearishOBs].sort((a,b) => b.top - a.top); 
         }
         
         if (potentialPOIs.length > 0) {
-            const selectedPOI = potentialPOIs[0]; // Take the "best" one (most extreme valid)
-            // Add related MSS index to POI for pending signal validation
+            const selectedPOI = potentialPOIs[0]; 
             (selectedPOI as any).relatedMSSIndexIfAvailable = lastMSS.index; 
 
             const distIdmToPoi = Math.abs(idmRelevantToLastMSS!.level - (lastMSS.direction === 'bullish' ? selectedPOI.top : selectedPOI.bottom));
             if (distIdmToPoi > currentAtrVal * SMC_MAX_DISTANCE_IDM_TO_POI_ATR_FACTOR) {
-                // console.log(`[${currentAssetIdForLog}] POI too far from IDM. Dist: ${distIdmToPoi.toFixed(4)}, Max allowed: ${(currentAtrVal * SMC_MAX_DISTANCE_IDM_TO_POI_ATR_FACTOR).toFixed(4)}`);
                 details.push(`POI (${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'}) @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)} muito distante do IDM. Setup ignorado.`);
             } else {
                 poiUsedForSignal = selectedPOI;
-                // console.log(`[${currentAssetIdForLog}] Selected POI: ${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'} @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)} (Index: ${'startIndex' in selectedPOI ? selectedPOI.startIndex : selectedPOI.index})`);
                 details.push(`POI Selecionado: ${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'} @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)}. Analisando mitigação...`);
                 
                 let mitigatedThisCandle = false;
@@ -312,15 +308,15 @@ const App: React.FC = () => {
                 } else { 
                     if (currentCandle.high >= selectedPOI.bottom && currentCandle.low <= selectedPOI.top) { mitigatedThisCandle = true; entry = Math.max(currentCandle.open, selectedPOI.bottom); }
                 }
-
-                const assetConfig = getSelectedAsset(currentAssetIdForLog);
-                const assetNameForSL = assetConfig?.name || currentAssetIdForLog || "ASSET";
+                
+                const assetConfig = getSelectedAsset(actualAssetIdString);
+                // Ensure assetNameForSL is a string for .toLowerCase()
+                const assetNameForSL = assetConfig?.name || actualAssetIdString || "ASSET"; 
                 const pipsValue = assetNameForSL.toLowerCase().includes("btc") ? 1 : assetNameForSL.toLowerCase().includes("eth") ? 0.1 : 0.0005;
                 const slBuffer = Math.max(currentAtrVal * 0.05, pipsValue * SMC_SL_BUFFER_PIPS_FACTOR * 10); 
 
 
                 if (mitigatedThisCandle && entry !== undefined) {
-                    // console.log(`[${currentAssetIdForLog}] POI mitigated by current candle. Entry @ ${entry.toFixed(4)}`);
                     signalType = selectedPOI.type === 'bullish' ? 'COMPRA' : 'VENDA';
                     
                     if (signalType === 'COMPRA') {
@@ -336,7 +332,6 @@ const App: React.FC = () => {
                     confidenceScoreValue = (killzone !== 'NONE') ? 'ALTA' : 'MÉDIA';
                     if (killzone === 'NONE') details.push("Confiança do sinal é MÉDIA devido à formação fora de Killzone principal.");
                 } else {
-                    // console.log(`[${currentAssetIdForLog}] POI identified, IDM swept, but current candle NOT mitigating. Setting AGUARDANDO_ENTRADA.`);
                     signalType = 'AGUARDANDO_ENTRADA';
                     justifications.push(`Setup SMC: ${lastMSS.type} ${lastMSS.direction}, IDM varrido. Aguardando mitigação do POI.`);
                     details.push(`Aguardando mitigação do POI (${selectedPOI.type} ${'startIndex' in selectedPOI ? 'FVG' : 'OB'}) @ ${selectedPOI.bottom.toFixed(4)}-${selectedPOI.top.toFixed(4)}.`);
@@ -354,12 +349,11 @@ const App: React.FC = () => {
                         takeProfit = undefined; 
                     }
                     levelsSource = `SMC: ${lastMSS.type} > IDM Sweep > POI (Pendente)`;
-                    const pendingSignalToSet = { type: signalType, details, justification: justifications.join('\n'), entry: tempEntryForSLTP, stopLoss, takeProfit, levelsSource, poiUsed: selectedPOI, confidenceScore: confidenceScoreValue, killzone};
-                    if (isBacktest) (currentAssetIdForLog as any).localPendingSignalForBacktest = pendingSignalToSet; else lastPendingSignalRef.current = pendingSignalToSet;
+                    const pendingSignalToSet: TradeSignal = { type: signalType, details, justification: justifications.join('\n'), entry: tempEntryForSLTP, stopLoss, takeProfit, levelsSource, poiUsed: selectedPOI, confidenceScore: confidenceScoreValue, killzone};
+                    if (isBacktest && mutablePendingSignalSource) mutablePendingSignalSource.localPendingSignalForBacktest = pendingSignalToSet; else lastPendingSignalRef.current = pendingSignalToSet;
                 }
             }
         } else {
-            // console.log(`[${currentAssetIdForLog}] No valid POIs found after IDM sweep.`);
             details.push("Nenhum POI (FVG/OB) válido encontrado após varredura do IDM (ou POIs muito distantes).");
         }
     }
@@ -369,13 +363,12 @@ const App: React.FC = () => {
     } else if (justifications.length === 0 && signalType !== 'NEUTRO' && signalType !== 'AGUARDANDO_ENTRADA') {
         justifications.push("Sinal SMC gerado com base nas regras da estratégia.");
     }
-    // console.log(`[${currentAssetIdForLog}] processSignalLogic END. Signal: ${signalType}, Confidence: ${confidenceScoreValue}`);
     return {
       type: signalType, details, justification: justifications.join('\n'),
       entry, stopLoss, takeProfit, levelsSource,
       confidenceScore: confidenceScoreValue, killzone, poiUsed: poiUsedForSignal
     };
-  };
+  }, [getSelectedAsset]);
 
   const performSingleAnalysis = useCallback(async (assetIdToAnalyze: string): Promise<AnalysisReport | null> => {
     const asset = getSelectedAsset(assetIdToAnalyze);
@@ -453,7 +446,7 @@ const App: React.FC = () => {
       }
       return null;
     }
-  }, [isScanning, getSelectedAsset, analysisReport, isPerformingMultiBacktest, selectedAssetId]);
+  }, [isScanning, getSelectedAsset, analysisReport, isPerformingMultiBacktest, selectedAssetId, processSignalLogic]);
 
 
   const runAnalysis = useCallback(async (assetIdOverride?: string) => {
@@ -556,8 +549,7 @@ const App: React.FC = () => {
         const indicatorsForSignal = calculateAllIndicators(dataForSignalGen);
         const smcForSignal = analyzeSMC(dataForSignalGen, indicatorsForSignal);
         
-        // Pass backtestContext (which is an object that can be mutated) to processSignalLogic
-        const liveSignal = processSignalLogic(dataForSignalGen, indicatorsForSignal, smcForSignal, true, backtestContext as any);
+        const liveSignal = processSignalLogic(dataForSignalGen, indicatorsForSignal, smcForSignal, true, backtestContext);
         
         let tradeSignalToExecute: TradeSignal | null = null;
 
@@ -727,7 +719,7 @@ const App: React.FC = () => {
           trades: [], summaryMessage: `Falha no backtest para ${asset.name}: ${e.message}`, error: e.message
       };
     }
-  }, [getSelectedAsset]);
+  }, [getSelectedAsset, processSignalLogic]);
 
   const handleRunCurrentAssetBacktest = useCallback(async () => {
       setIsPerformingBacktest(true);

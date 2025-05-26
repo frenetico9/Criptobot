@@ -167,7 +167,6 @@ const processSignalLogic = (
 
     // Try to restore/process pending signal first
     if (pendingSignalRef.current && pendingSignalRef.current.type === 'AGUARDANDO_ENTRADA' && pendingSignalRef.current.poiUsed && pendingSignalRef.current.assetIdForRef === currentAssetIdForLog) {
-        // FIX: Remove unnecessary cast as pendingSignalRef.current.poiUsed is now correctly typed
         const pendingPOI = pendingSignalRef.current.poiUsed;
         let mitigatedThisCandle = false;
         let entryPriceThisCandle: number | undefined;
@@ -182,7 +181,7 @@ const processSignalLogic = (
                     mitigatedThisCandle = true;
                     entryPriceThisCandle = Math.min(currentCandle.open, pendingPOI.top);
                 }
-            } else {
+            } else { // bearish
                 if (currentCandle.high >= pendingPOI.bottom && currentCandle.low <= pendingPOI.top) {
                     mitigatedThisCandle = true;
                     entryPriceThisCandle = Math.max(currentCandle.open, pendingPOI.bottom);
@@ -192,8 +191,20 @@ const processSignalLogic = (
             if (mitigatedThisCandle && entryPriceThisCandle !== undefined) {
                 signalType = pendingPOI.type === 'bullish' ? 'COMPRA' : 'VENDA';
                 entry = entryPriceThisCandle;
-                stopLoss = pendingSignalRef.current.stopLoss;
-                takeProfit = pendingSignalRef.current.takeProfit;
+                stopLoss = pendingSignalRef.current.stopLoss; // SL from pending signal
+                
+                if (entry && stopLoss) {
+                    const riskAmount = signalType === 'COMPRA' ? (entry - stopLoss) : (stopLoss - entry);
+                    if (riskAmount > 0) {
+                        takeProfit = signalType === 'COMPRA' ? (entry + riskAmount * SMC_STRATEGY_MIN_RR_RATIO) : (entry - riskAmount * SMC_STRATEGY_MIN_RR_RATIO);
+                    } else {
+                        takeProfit = undefined;
+                        details.push("Aviso: Risco inválido no sinal pendente, TP não calculado.");
+                    }
+                } else {
+                    takeProfit = pendingSignalRef.current.takeProfit; // Fallback if recalculation isn't possible
+                }
+
                 levelsSource = pendingSignalRef.current.levelsSource?.replace(" (Pendente)", " (Acionado)") || "SMC Acionado";
                 justifications.push(`Entrada no POI pendente (${pendingPOI.type} ${'startIndex' in pendingPOI ? 'FVG' : 'OB'} @ ${pendingPOI.bottom.toFixed(4)}-${pendingPOI.top.toFixed(4)}) mitigado.`);
                 details.push(...(pendingSignalRef.current.details || []).filter(d => !d.startsWith("Aguardando mitigação")));
@@ -212,7 +223,6 @@ const processSignalLogic = (
     }
 
     if (lastMSS && idmRelevantToLastMSS?.isSwept && signalType === 'NEUTRO') {
-        // FIX: Use potentialPOIsBase with type (FVG | OrderBlock)[] and augment selected POI later
         let potentialPOIsBase: (FVG | OrderBlock)[] = [];
         if (lastMSS.direction === 'bullish') {
             const unmitigatedBullishFVGs = fvgs.filter(fvg => fvg.type === 'bullish' && !fvg.isMitigated && fvg.bottom < idmRelevantToLastMSS!.level && fvg.startIndex > lastMSS.index);
@@ -226,7 +236,6 @@ const processSignalLogic = (
 
         if (potentialPOIsBase.length > 0) {
             const selectedPOIBase = potentialPOIsBase[0];
-            // FIX: Create an augmented POI with relatedMSSIndexIfAvailable
             const selectedPOIAugmented = { ...selectedPOIBase, relatedMSSIndexIfAvailable: lastMSS.index };
 
             const distIdmToPoi = Math.abs(idmRelevantToLastMSS!.level - (lastMSS.direction === 'bullish' ? selectedPOIAugmented.top : selectedPOIAugmented.bottom));
@@ -239,7 +248,7 @@ const processSignalLogic = (
                 let mitigatedThisCandle = false;
                 if (selectedPOIAugmented.type === 'bullish') {
                     if (currentCandle.low <= selectedPOIAugmented.top && currentCandle.high >= selectedPOIAugmented.bottom) { mitigatedThisCandle = true; entry = Math.min(currentCandle.open, selectedPOIAugmented.top); }
-                } else {
+                } else { // bearish
                     if (currentCandle.high >= selectedPOIAugmented.bottom && currentCandle.low <= selectedPOIAugmented.top) { mitigatedThisCandle = true; entry = Math.max(currentCandle.open, selectedPOIAugmented.bottom); }
                 }
 
@@ -253,28 +262,51 @@ const processSignalLogic = (
                     if (signalType === 'COMPRA') {
                         const poiLowStructure = 'startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].low : selectedPOIAugmented.bottom;
                         stopLoss = poiLowStructure - (currentAtrVal * SMC_SL_ATR_MULTIPLIER) - slBuffer;
-                    } else {
+                        if (stopLoss && entry > stopLoss) {
+                            const riskAmount = entry - stopLoss;
+                            takeProfit = entry + (riskAmount * SMC_STRATEGY_MIN_RR_RATIO);
+                        } else {
+                             takeProfit = undefined; details.push("Aviso: Risco inválido (COMPRA), TP não calculado.");
+                        }
+                    } else { // VENDA
                         const poiHighStructure = 'startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].high : selectedPOIAugmented.top;
                         stopLoss = poiHighStructure + (currentAtrVal * SMC_SL_ATR_MULTIPLIER) + slBuffer;
+                         if (stopLoss && entry < stopLoss) {
+                            const riskAmount = stopLoss - entry;
+                            takeProfit = entry - (riskAmount * SMC_STRATEGY_MIN_RR_RATIO);
+                        } else {
+                            takeProfit = undefined; details.push("Aviso: Risco inválido (VENDA), TP não calculado.");
+                        }
                     }
-                    takeProfit = entry + (entry - stopLoss) * (signalType === 'COMPRA' ? 1 : -1) * SMC_STRATEGY_MIN_RR_RATIO;
                     levelsSource = `SMC: ${lastMSS.type} > IDM Sweep > ${'startIndex' in selectedPOIAugmented ? 'FVG' : 'OB'} Entry`;
                     justifications.push(`Setup SMC: ${lastMSS.type} ${lastMSS.direction}, varredura de IDM, entrada no POI (${selectedPOIAugmented.type}).`);
                     confidenceScoreValue = (killzone !== 'NONE') ? 'ALTA' : 'MÉDIA';
                     if (killzone === 'NONE') details.push("Confiança do sinal é MÉDIA devido à formação fora de Killzone principal.");
-                    pendingSignalRef.current = null; // Clear any pending signal as we have an active one
-                } else { // POI not mitigated by current candle - potential new AGUARDANDO_ENTRADA
+                    pendingSignalRef.current = null; 
+                } else { 
                     const tempEntryForSLTP = selectedPOIAugmented.type === 'bullish' ? selectedPOIAugmented.top : selectedPOIAugmented.bottom;
                     let tempStopLoss: number | undefined;
                     if (selectedPOIAugmented.type === 'bullish') {
                          tempStopLoss = ('startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].low : selectedPOIAugmented.bottom) - (currentAtrVal * SMC_SL_ATR_MULTIPLIER) - slBuffer;
-                    } else {
+                    } else { // bearish
                          tempStopLoss = ('startIndex' in selectedPOIAugmented ? historicalCandles[selectedPOIAugmented.startIndex].high : selectedPOIAugmented.top) + (currentAtrVal * SMC_SL_ATR_MULTIPLIER) + slBuffer;
                     }
+                    
                     let tempTakeProfit: number | undefined;
                     if (tempStopLoss && tempEntryForSLTP) {
-                        tempTakeProfit = tempEntryForSLTP + (tempEntryForSLTP - tempStopLoss) * (selectedPOIAugmented.type === 'bullish' ? 1 : -1) * SMC_STRATEGY_MIN_RR_RATIO;
+                        if (selectedPOIAugmented.type === 'bullish') {
+                            if (tempEntryForSLTP > tempStopLoss) {
+                                const riskAmount = tempEntryForSLTP - tempStopLoss;
+                                tempTakeProfit = tempEntryForSLTP + (riskAmount * SMC_STRATEGY_MIN_RR_RATIO);
+                            }
+                        } else { // bearish
+                             if (tempEntryForSLTP < tempStopLoss) {
+                                const riskAmount = tempStopLoss - tempEntryForSLTP;
+                                tempTakeProfit = tempEntryForSLTP - (riskAmount * SMC_STRATEGY_MIN_RR_RATIO);
+                            }
+                        }
                     }
+
 
                     const newPendingSignalCandidate: PendingSignalRefContent = {
                         type: 'AGUARDANDO_ENTRADA',
@@ -297,7 +329,6 @@ const processSignalLogic = (
                         existingPendingPOI &&
                         pendingSignalRef.current.assetIdForRef === currentAssetIdForLog &&
                         selectedPOIAugmented.type === existingPendingPOI.type &&
-                        // Check if it's the same FVG or OB by checking 'startIndex' for FVG and 'index' for OB
                         ((('startIndex' in selectedPOIAugmented && 'startIndex' in existingPendingPOI && selectedPOIAugmented.startIndex === existingPendingPOI.startIndex) ||
                           (!('startIndex' in selectedPOIAugmented) && !('startIndex' in existingPendingPOI) && 'index' in selectedPOIAugmented && 'index' in existingPendingPOI && selectedPOIAugmented.index === existingPendingPOI.index))) &&
                         Math.abs(selectedPOIAugmented.bottom - existingPendingPOI.bottom) < (currentAtrVal * 0.1) &&
@@ -310,7 +341,7 @@ const processSignalLogic = (
                     } else {
                         signalType = newPendingSignalCandidate.type;
                         justifications.push(newPendingSignalCandidate.justification || "Setup SMC: Aguardando mitigação do POI.");
-                        details.length = 0; // Clear previous details, use only from new candidate
+                        details.length = 0; 
                         details.push(...(newPendingSignalCandidate.details || []));
                         confidenceScoreValue = newPendingSignalCandidate.confidenceScore || 'MÉDIA';
                         entry = newPendingSignalCandidate.entry;
@@ -665,7 +696,7 @@ const App: React.FC = () => {
                     backtestTrade.exitDate = executionCandle.date; backtestTrade.reasonForExit = 'TP_HIT';
                     break;
                 }
-            } else {
+            } else { // VENDA
                 if (executionCandle.high >= backtestTrade.stopLossPrice) {
                     backtestTrade.result = 'LOSS'; backtestTrade.exitPrice = backtestTrade.stopLossPrice;
                     backtestTrade.exitDate = executionCandle.date; backtestTrade.reasonForExit = 'SL_HIT';
@@ -695,15 +726,16 @@ const App: React.FC = () => {
                 pnlForThisTradeBRL = riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO;
             } else if (backtestTrade.result === 'LOSS') {
                 pnlForThisTradeBRL = -riskPerTrade;
-            } else {
+            } else { // END_OF_BACKTEST_PERIOD might have PNL
                 const pointsToSL = Math.abs(backtestTrade.entryPrice - backtestTrade.stopLossPrice);
-                if (pointsToSL > 0.0000001) {
+                if (pointsToSL > 0.0000001) { // Avoid division by zero
                     const pnlRatioToRisk = backtestTrade.pnlPoints / pointsToSL;
                     pnlForThisTradeBRL = pnlRatioToRisk * riskPerTrade;
+                    // Cap PNL to max defined by RR or max loss
                     pnlForThisTradeBRL = Math.min(pnlForThisTradeBRL, riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO);
                     pnlForThisTradeBRL = Math.max(pnlForThisTradeBRL, -riskPerTrade);
                 } else {
-                    pnlForThisTradeBRL = 0;
+                    pnlForThisTradeBRL = 0; // No risk, no PNL
                 }
             }
 

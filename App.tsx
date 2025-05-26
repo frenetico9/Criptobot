@@ -1,14 +1,14 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AssetSelector from './components/AssetSelector';
-import ChartDisplay from './components/ChartDisplay';
+// import ChartDisplay from './components/ChartDisplay'; // Removed
 import AnalysisPanel from './components/AnalysisPanel';
 import LoadingSpinner from './components/LoadingSpinner';
 import ErrorMessage from './components/ErrorMessage';
 import { SunIcon, MoonIcon, CogIcon, ChartBarIcon, PlayCircleIcon, BeakerIcon, ListBulletIcon } from './components/icons';
 import {
   Candle, TechnicalIndicators, SmcAnalysis,
-  TradeSignal, TradeSignalType, AnalysisReport, Asset, ChartDatapoint, AssetType, SignalConfidence,
+  TradeSignal, TradeSignalType, AnalysisReport, Asset, AssetType, SignalConfidence, /* ChartDatapoint removed */
   StrategyBacktestResult, BacktestTrade, MarketStructurePoint, InducementPoint, FVG, OrderBlock, KillzoneSession, SwingPoint
 } from './types';
 import {
@@ -375,7 +375,7 @@ const processSignalLogic = (
 const App: React.FC = () => {
   const [selectedAssetId, setSelectedAssetId] = useState<string>(DEFAULT_ASSET_ID);
   const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(null);
-  const [chartData, setChartData] = useState<ChartDatapoint[]>([]);
+  // const [chartData, setChartData] = useState<ChartDatapoint[]>([]); // Removed
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isPerformingBacktest, setIsPerformingBacktest] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -520,7 +520,7 @@ const App: React.FC = () => {
 
     if (!assetIdOverride) {
         setAnalysisReport(null);
-        setChartData([]);
+        // setChartData([]); // Removed
         lastPendingSignalRef.current = null; // Clear pending signal for a fresh analysis of the selected asset
     } else {
         // If assetIdOverride is different from selectedAssetId, it's likely a scan.
@@ -532,28 +532,9 @@ const App: React.FC = () => {
 
     if (report) {
       setAnalysisReport(report);
-      const newChartData: ChartDatapoint[] = report.fullHistory!.map((candle, i) => {
-        const killzone = getCurrentKillzone(candle.date);
-        return {
-            ...candle,
-            emaShort: report.fullIndicators!.emaShort?.[i],
-            emaLong: report.fullIndicators!.emaLong?.[i],
-            emaTrend: report.fullIndicators!.emaTrend?.[i],
-            rsi: report.fullIndicators!.rsi?.[i],
-            macdLine: report.fullIndicators!.macdLine?.[i],
-            macdSignal: report.fullIndicators!.macdSignal?.[i],
-            macdHist: report.fullIndicators!.macdHist?.[i],
-            bbUpper: report.fullIndicators!.bbUpper?.[i],
-            bbMiddle: report.fullIndicators!.bbMiddle?.[i],
-            bbLower: report.fullIndicators!.bbLower?.[i],
-            isLondonKillzone: killzone === 'LONDON',
-            isNewYorkKillzone: killzone === 'NEWYORK',
-        };
-      });
-      setChartData(newChartData);
+      // Chart data preparation removed
       if (assetIdOverride && selectedAssetId !== assetIdOverride) {
         setSelectedAssetId(assetIdOverride);
-        // lastPendingSignalRef is managed by performSingleAnalysis or cleared if asset changes via selector
       }
        if (error) setError(null);
     }
@@ -882,11 +863,9 @@ const App: React.FC = () => {
     setError(null);
     setIsScanning(true);
     setAnalysisReport(null);
-    setChartData([]);
+    // setChartData([]); // Removed
     scannerStopFlag.current = false;
     let strongSignalFound = false;
-    // For scan, each asset analysis is independent, so pending signals don't carry over between assets
-    // lastPendingSignalRef will be managed by performSingleAnalysis for each asset individually.
 
     const assetsToScan = MASTER_ASSET_LIST.filter(asset => asset.type === AssetType.CRYPTO);
 
@@ -899,11 +878,6 @@ const App: React.FC = () => {
       setScanProgress(`Varrendo ${asset.name} (${i + 1}/${assetsToScan.length}) com estratégia SMC...`);
 
       await new Promise(resolve => setTimeout(resolve, SCAN_UPDATE_INTERVAL_MS));
-
-      // Create a temporary ref for this specific asset's scan iteration if needed,
-      // or rely on performSingleAnalysis to clear the main ref if asset ID changes.
-      // The current setup with performSingleAnalysis taking lastPendingSignalRef and clearing it
-      // if assetIdForRef mismatches is suitable.
       const report = await performSingleAnalysis(asset.id, lastPendingSignalRef);
 
       if (report && report.finalSignal) {
@@ -953,7 +927,7 @@ const App: React.FC = () => {
               onAssetChange={(newAssetId) => {
                 setSelectedAssetId(newAssetId);
                 setAnalysisReport(null);
-                setChartData([]);
+                // setChartData([]); // Removed
                 setScanProgress("");
                 setError(null);
                 lastPendingSignalRef.current = null; // Clear pending signal on manual asset change
@@ -1029,60 +1003,42 @@ const App: React.FC = () => {
         )}
       </header>
 
-      <main className="container mx-auto p-2 sm:p-4 flex-grow grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        <div className="lg:col-span-2 bg-surface-light dark:bg-surface-dark p-1 sm:p-2 rounded-lg shadow-xl dark:shadow-black/30 border border-gray-300 dark:border-gray-600">
+      <main className="container mx-auto p-2 sm:p-4 flex-grow flex flex-col">
+        <div className="flex-grow bg-surface-light dark:bg-surface-dark p-1 sm:p-2 rounded-lg shadow-xl dark:shadow-black/30 border border-gray-300 dark:border-gray-600 overflow-y-auto max-h-[calc(100vh-160px)] lg:max-h-[calc(100vh-120px)]">
           {(isLoading && !analysisReport && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest) && (
             <div className="flex flex-col items-center justify-center h-full">
               <LoadingSpinner size="lg" text={`Analisando ${getSelectedAsset()?.name || 'ativo'} (SMC)...`} />
             </div>
           )}
           {isPerformingBacktest && !analysisReport?.strategyBacktestResult && (
-             <div className="flex flex-col items-center justify-center h-full">
+              <div className="flex flex-col items-center justify-center h-full">
               <LoadingSpinner size="lg" text={`Executando backtest SMC de ${BACKTEST_PERIOD_DAYS} dias para ${getSelectedAsset()?.name || 'ativo'}...`} />
             </div>
           )}
-           {(isScanning || isPerformingMultiBacktest) && !analysisReport && (
-             <div className="flex flex-col items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4">
+          {(isScanning || isPerformingMultiBacktest) && !analysisReport && (
+              <div className="flex flex-col items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4">
                 <LoadingSpinner size="lg" text={isScanning ? "Varredura SMC em progresso..." : "Backtest SMC de múltiplos ativos em progresso..."} />
-                <p className="mt-2 text-sm">O gráfico e a análise do ativo com sinal (ou primeiro ativo do multi-backtest) aparecerão aqui se aplicável.</p>
-             </div>
+                <p className="mt-2 text-sm">A análise do ativo com sinal (ou primeiro ativo do multi-backtest) aparecerá aqui.</p>
+              </div>
           )}
-          {!isLoading && !isPerformingBacktest && !isPerformingMultiBacktest && error && !analysisReport && ( <ErrorMessage title="Falha na Operação" message={error} /> )}
-
-          {chartData.length > 0 && analysisReport && (
-            <ChartDisplay
-              data={chartData}
-              smcAnalysis={analysisReport.smcAnalysis}
-              tradeSignal={analysisReport.finalSignal}
-              assetName={analysisReport.asset}
+          {!isLoading && !isPerformingBacktest && !isPerformingMultiBacktest && error && !analysisReport && (
+            <div className="p-4 h-full flex items-center justify-center">
+              <ErrorMessage title="Falha na Operação" message={error} />
+            </div>
+           )}
+          {analysisReport && (
+            <AnalysisPanel
+              report={analysisReport}
+              isLoading={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest}
+              isScanning={isScanning}
+              isPerformingBacktest={isPerformingBacktest || isPerformingMultiBacktest}
             />
           )}
-
-           {!isLoading && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest && !error && chartData.length === 0 && !analysisReport && (
-             <div className="flex items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4 text-center">
-                <p>Selecione um ativo e clique em "Analisar SMC", "Scan All SMC" ou um dos botões de "Backtest SMC".</p>
-             </div>
-           )}
-        </div>
-        <div className="lg:col-span-1 bg-transparent dark:bg-transparent p-0 rounded-lg max-h-[calc(100vh-160px)] lg:max-h-[calc(100vh-120px)] overflow-y-auto">
-          {((isLoading || isPerformingBacktest || isPerformingMultiBacktest) && !isScanning && !analysisReport?.strategyBacktestResult && (!analysisReport?.finalSignal || analysisReport.finalSignal.type === 'NEUTRO')) && (
-            <div className="flex flex-col items-center justify-center h-full p-4 bg-surface-light dark:bg-surface-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600">
-              <LoadingSpinner size="md" text={isLoading ? "Carregando relatório SMC..." : (isPerformingBacktest ? "Executando backtest SMC..." : "Executando múltiplos backtests SMC...")} />
+          {!isLoading && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest && !error && !analysisReport && (
+            <div className="flex items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4 text-center">
+              <p>O relatório de análise SMC aparecerá aqui. Selecione um ativo e clique em "Analisar SMC", "Scan All SMC" ou um dos botões de "Backtest SMC".</p>
             </div>
           )}
-           {isScanning && !analysisReport && (
-            <div className="flex flex-col items-center justify-center h-full p-4 bg-surface-light dark:bg-surface-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600">
-              <LoadingSpinner size="md" text="Aguardando resultado da varredura SMC..." />
-            </div>
-          )}
-          
-          {analysisReport && <AnalysisPanel report={analysisReport} isLoading={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest} isScanning={isScanning} isPerformingBacktest={isPerformingBacktest || isPerformingMultiBacktest} />}
-
-
-          {!isLoading && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest && !analysisReport && !error && (
-            <div className="p-6 text-center text-text_secondary-light dark:text_text_secondary-dark bg-surface-light dark:bg-surface-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600 h-full flex items-center justify-center">O relatório SMC aparecerá aqui.</div>
-          )}
-           {!isLoading && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest && error && !analysisReport && ( <div className="p-4 bg-surface-light dark:bg-surface-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600 h-full"><ErrorMessage title="Erro no Relatório SMC" message={error} /></div> )}
         </div>
       </main>
       <footer className="text-center p-3 text-xs text-text_secondary-light dark:text_text_secondary-dark border-t border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark">

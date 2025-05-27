@@ -42,8 +42,6 @@ const assetToBinanceSymbolMap: Record<string, string> = {
   'MEME-USD': 'MEMEUSDT', // Assuming MEME is the ticker for Memecoin
   'BOME-USD': 'BOMEUSDT',
   'TURBO-USD': 'TURBOUSDT',
-  'COQ-USD': 'COQUSDT',
-  'MYRO-USD': 'MYROUSDT',
 };
 
 const mapAssetIdToBinanceSymbol = (assetId: string): string | null => {

@@ -126,7 +126,7 @@ export interface BacktestTrade {
   result: 'WIN' | 'LOSS' | 'OPEN' | 'NO_TRIGGER' | 'IGNORED'; 
   pnlPoints?: number;
   pnlPercentage?: number; 
-  reasonForExit?: 'TP_HIT' | 'SL_HIT' | 'END_OF_BACKTEST_PERIOD' | 'INSUFFICIENT_CAPITAL' | 'FILTERED_INTERNAL' | 'NO_CLEAR_SETUP' | 'IDM_NOT_SWEPT' | 'POI_MISSED';
+  reasonForExit?: 'TP_HIT' | 'SL_HIT' | 'END_OF_BACKTEST_PERIOD' | 'INSUFFICIENT_CAPITAL' | 'FILTERED_INTERNAL' | 'NO_CLEAR_SETUP' | 'IDM_NOT_SWEPT' | 'POI_MISSED' | 'REPEATED_BUY_LOSS_SEQUENCE' | 'NEUTRAL_SIGNAL' | 'SIGNAL_ERROR_OR_UNACTIONABLE';
   durationCandles?: number;
   pnlBRL?: number; 
   capitalBeforeTrade?: number; 

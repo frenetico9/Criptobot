@@ -21,7 +21,7 @@ import {
   GENERAL_LIQUIDITY_WINDOW_ASIA_UTC_START, GENERAL_LIQUIDITY_WINDOW_ASIA_UTC_END,
   ATR_VOLATILITY_AVG_PERIOD, VOLATILITY_HIGH_FACTOR, VOLATILITY_LOW_FACTOR,
   BACKTEST_INITIAL_CAPITAL_BRL, BACKTEST_RISK_PER_TRADE_BRL,
-  CANDLE_DURATION_MINUTES,
+  CANDLE_DURATION_MINUTES, CONSECUTIVE_BUY_LOSS_SL_THRESHOLD,
   SMC_STRATEGY_MIN_RR_RATIO, SMC_SL_ATR_MULTIPLIER, SMC_SL_BUFFER_PIPS_FACTOR,
   LONDON_KILLZONE_UTC_START, LONDON_KILLZONE_UTC_END,
   NEWYORK_KILLZONE_UTC_START, NEWYORK_KILLZONE_UTC_END,
@@ -565,7 +565,6 @@ const App: React.FC = () => {
     let peakCapitalBRL = initialCapital;
     let maxDrawdownBRL = 0;
 
-    let totalPnlPoints = 0;
     let winningTrades = 0;
     let losingTrades = 0;
     let totalTradesAttempted = 0;
@@ -574,7 +573,6 @@ const App: React.FC = () => {
     let grossProfitPoints = 0;
     let grossLossPoints = 0;
 
-    // Use a local pending signal ref for backtesting to avoid interference with the main UI's ref
     const localPendingSignalForBacktestRef = React.createRef<PendingSignalRefContent | null>() as React.MutableRefObject<PendingSignalRefContent | null>;
     localPendingSignalForBacktestRef.current = null;
 
@@ -600,25 +598,66 @@ const App: React.FC = () => {
         const indicatorsForSignal = calculateAllIndicators(dataForSignalGen);
         const smcForSignal = analyzeSMC(dataForSignalGen, indicatorsForSignal);
         
-        // Pass the local ref for backtest's signal processing
         const liveSignal = processSignalLogic(dataForSignalGen, indicatorsForSignal, smcForSignal, true, assetIdForBacktest, localPendingSignalForBacktestRef);
+        totalTradesAttempted++; 
+
+        let skipSignalDueToRepetitiveLoss = false;
+        if (liveSignal.type.includes('COMPRA')) {
+            const recentExecutedTrades = backtestTrades.filter(t => t.result !== 'IGNORED' && t.result !== 'NO_TRIGGER');
+            if (recentExecutedTrades.length >= CONSECUTIVE_BUY_LOSS_SL_THRESHOLD) {
+                const lastNTrades = recentExecutedTrades.slice(-CONSECUTIVE_BUY_LOSS_SL_THRESHOLD);
+                const allMatchLossPattern = lastNTrades.every(
+                    trade => trade.signalType === 'COMPRA' && trade.result === 'LOSS' && trade.reasonForExit === 'SL_HIT'
+                );
+                if (allMatchLossPattern) {
+                    skipSignalDueToRepetitiveLoss = true;
+                }
+            }
+        }
+
+        if (skipSignalDueToRepetitiveLoss) {
+            totalTradesIgnored++;
+            backtestTrades.push({
+                assetId: assetIdForBacktest,
+                signalCandleDate: currentSignalCandle.date,
+                signalType: 'COMPRA', // It was a COMPRA signal that's being skipped
+                entryDate: currentSignalCandle.date,
+                entryPrice: liveSignal.entry || 0,
+                stopLossPrice: liveSignal.stopLoss || 0,
+                takeProfitPrice: liveSignal.takeProfit || 0,
+                result: 'IGNORED',
+                reasonForExit: 'REPEATED_BUY_LOSS_SEQUENCE',
+                pnlBRL: 0,
+                capitalBeforeTrade: currentCapitalBRL,
+                capitalAfterTrade: currentCapitalBRL,
+            });
+            continue; 
+        }
         
         let tradeSignalToExecute: TradeSignal | null = null;
-
         if (liveSignal.type === 'COMPRA' || liveSignal.type === 'VENDA') {
             tradeSignalToExecute = liveSignal;
         } else if (liveSignal.type === 'AGUARDANDO_ENTRADA') {
-            // AGUARDANDO_ENTRADA signals are managed by localPendingSignalForBacktestRef internally by processSignalLogic
-            // No trade to execute on this candle unless it was triggered from a previous pending state by processSignalLogic
-        } else if (liveSignal.type !== 'NEUTRO' && liveSignal.type !== 'ERRO') {
-             totalTradesAttempted++; totalTradesIgnored++;
+            // This state is managed internally by processSignalLogic's ref for subsequent calls
+        } else { // NEUTRO, ERRO - these are considered ignored attempts
+            totalTradesIgnored++;
+             if (liveSignal.type !== 'ERRO') { // Log non-error ignored signals
+                 backtestTrades.push({
+                    assetId: assetIdForBacktest, signalCandleDate: currentSignalCandle.date,
+                    signalType: liveSignal.type.includes('COMPRA') ? 'COMPRA' : (liveSignal.type.includes('VENDA') ? 'VENDA' : 'NEUTRO') as any,
+                    entryDate: currentSignalCandle.date, entryPrice: liveSignal.entry || 0,
+                    stopLossPrice: liveSignal.stopLoss || 0, takeProfitPrice: liveSignal.takeProfit || 0,
+                    result: 'IGNORED', reasonForExit: liveSignal.type === 'NEUTRO' ? 'NEUTRAL_SIGNAL' : 'SIGNAL_ERROR_OR_UNACTIONABLE',
+                    pnlBRL: 0,
+                    capitalBeforeTrade: currentCapitalBRL, capitalAfterTrade: currentCapitalBRL,
+                });
+            }
         }
 
-
-        if (tradeSignalToExecute && handleTradeExecution(tradeSignalToExecute, currentSignalCandle, allFetchedCandles, i)) {
-            // Trade processed
+        if (tradeSignalToExecute) {
+           handleTradeExecution(tradeSignalToExecute, currentSignalCandle, allFetchedCandles, i);
         }
-      } // End of main loop for candles
+      } 
 
       function handleTradeExecution(
         tradeSignal: TradeSignal,
@@ -627,17 +666,16 @@ const App: React.FC = () => {
         signalCandleIndex: number
       ): boolean {
         if (!tradeSignal.entry || !tradeSignal.stopLoss || !tradeSignal.takeProfit) {
-            totalTradesAttempted++; totalTradesIgnored++;
+            totalTradesIgnored++; // This was already counted as an attempt, now it's an ignored execution
             backtestTrades.push({
                 assetId: assetIdForBacktest, signalCandleDate: signalCandle.date,
                 signalType: tradeSignal.type.includes('COMPRA') ? 'COMPRA' : 'VENDA',
                 entryDate: signalCandle.date, entryPrice: 0, stopLossPrice: 0, takeProfitPrice: 0,
-                result: 'IGNORED', reasonForExit: 'NO_CLEAR_SETUP',
-                capitalBeforeTrade: currentCapitalBRL, capitalAfterTrade: currentCapitalBRL
+                result: 'IGNORED', reasonForExit: 'NO_CLEAR_SETUP', // Or "MISSING_LEVELS"
+                capitalBeforeTrade: currentCapitalBRL, capitalAfterTrade: currentCapitalBRL, pnlBRL: 0
             });
-            return true;
+            return false; // Indicate trade was not fully processed for execution
         }
-        totalTradesAttempted++;
 
         if (currentCapitalBRL < riskPerTrade) {
             totalTradesIgnored++;
@@ -647,9 +685,9 @@ const App: React.FC = () => {
                 entryDate: signalCandle.date, entryPrice: tradeSignal.entry,
                 stopLossPrice: tradeSignal.stopLoss, takeProfitPrice: tradeSignal.takeProfit,
                 result: 'NO_TRIGGER', reasonForExit: 'INSUFFICIENT_CAPITAL',
-                capitalBeforeTrade: currentCapitalBRL, capitalAfterTrade: currentCapitalBRL,
+                capitalBeforeTrade: currentCapitalBRL, capitalAfterTrade: currentCapitalBRL, pnlBRL: 0
             });
-            return true;
+            return false;
         }
 
         totalTradesExecuted++;
@@ -707,16 +745,15 @@ const App: React.FC = () => {
                 pnlForThisTradeBRL = riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO;
             } else if (backtestTrade.result === 'LOSS') {
                 pnlForThisTradeBRL = -riskPerTrade;
-            } else { // END_OF_BACKTEST_PERIOD might have PNL
+            } else { 
                 const pointsToSL = Math.abs(backtestTrade.entryPrice - backtestTrade.stopLossPrice);
-                if (pointsToSL > 0.0000001) { // Avoid division by zero
+                if (pointsToSL > 0.0000001) { 
                     const pnlRatioToRisk = backtestTrade.pnlPoints / pointsToSL;
                     pnlForThisTradeBRL = pnlRatioToRisk * riskPerTrade;
-                    // Cap PNL to max defined by RR or max loss
                     pnlForThisTradeBRL = Math.min(pnlForThisTradeBRL, riskPerTrade * SMC_STRATEGY_MIN_RR_RATIO);
                     pnlForThisTradeBRL = Math.max(pnlForThisTradeBRL, -riskPerTrade);
                 } else {
-                    pnlForThisTradeBRL = 0; // No risk, no PNL
+                    pnlForThisTradeBRL = 0; 
                 }
             }
 
@@ -918,7 +955,7 @@ const App: React.FC = () => {
           <div className="flex items-center space-x-2">
             <ChartBarIcon className="h-7 w-7 sm:h-8 sm:w-8 text-primary dark:text-primary-light" />
             <h1 className="text-xl sm:text-2xl font-bold text-text_primary-light dark:text-text_primary-dark">
-              Fiscal Cripto <span className="text-primary dark:text-primary-light">SMC (M15)</span>
+              Fiscal Cripto <span className="text-primary dark:text-primary-light">SMC (M5)</span>
             </h1>
           </div>
 
@@ -939,11 +976,11 @@ const App: React.FC = () => {
               onClick={() => {setError(null); runAnalysis();}}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest}
               className="px-3 py-2 sm:px-4 bg-primary dark:bg-primary-dark hover:bg-primary-light dark:hover:bg-primary-light text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1 sm:space-x-2 hover:scale-105 hover:brightness-110 transform"
-              title="Analisar Ativo Selecionado (SMC M15)"
+              title="Analisar Ativo Selecionado (SMC M5)"
             >
               <CogIcon className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{isLoading ? 'Analisando...' : 'Analisar SMC (M15)'}</span>
-              <span className="sm:hidden text-xs">{isLoading ? '...' : 'Analisar SMC (M15)'}</span>
+              <span className="hidden sm:inline">{isLoading ? 'Analisando...' : 'Analisar SMC (M5)'}</span>
+              <span className="sm:hidden text-xs">{isLoading ? '...' : 'Analisar SMC (M5)'}</span>
             </button>
              <button
               onClick={isScanning ? stopScan : () => {setError(null); handleScanAllAssets();}}
@@ -953,31 +990,31 @@ const App: React.FC = () => {
                 ? 'bg-red-500 hover:bg-red-600 text-white'
                 : 'bg-green-500 dark:bg-green-600 hover:bg-green-600 dark:hover:bg-green-700 text-white'
               }`}
-              title={isScanning ? "Parar Varredura SMC (M15)" : "Iniciar Varredura SMC (M15) de Todos os Ativos"}
+              title={isScanning ? "Parar Varredura SMC (M5)" : "Iniciar Varredura SMC (M5) de Todos os Ativos"}
             >
               <PlayCircleIcon className={`w-5 h-5 ${isScanning && !scannerStopFlag.current ? 'animate-ping' : ''}`} />
-              <span className="hidden sm:inline">{isScanning ? (scannerStopFlag.current ? 'Parando...' : 'Parar Scan') : 'Scan All SMC (M15)'}</span>
-              <span className="sm:hidden text-xs">{isScanning ? (scannerStopFlag.current ? '...' : 'Parar') : 'Scan All SMC (M15)'}</span>
+              <span className="hidden sm:inline">{isScanning ? (scannerStopFlag.current ? 'Parando...' : 'Parar Scan') : 'Scan All SMC (M5)'}</span>
+              <span className="sm:hidden text-xs">{isScanning ? (scannerStopFlag.current ? '...' : 'Parar') : 'Scan All SMC (M5)'}</span>
             </button>
             <button
               onClick={() => {setError(null); handleRunCurrentAssetBacktest();}}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest }
               className="px-3 py-2 sm:px-4 bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-800 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1 sm:space-x-2 hover:scale-105 hover:brightness-110 transform"
-              title={`Executar Backtest SMC M15 de ${BACKTEST_PERIOD_DAYS} Dias para o Ativo Atual (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
+              title={`Executar Backtest SMC M5 de ${BACKTEST_PERIOD_DAYS} Dias para o Ativo Atual (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
             >
               <BeakerIcon className={`w-5 h-5 ${isPerformingBacktest ? 'animate-pulse' : ''}`} />
-              <span className="hidden sm:inline">{isPerformingBacktest ? 'Testando...' : `BT Ativo SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
-              <span className="sm:hidden text-xs">{isPerformingBacktest ? '...' : `BT Ativo SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="hidden sm:inline">{isPerformingBacktest ? 'Testando...' : `BT Ativo SMC M5 (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="sm:hidden text-xs">{isPerformingBacktest ? '...' : `BT Ativo SMC M5 (${BACKTEST_PERIOD_DAYS}d)`}</span>
             </button>
             <button
               onClick={() => {setError(null); handleRunMultiAssetBacktest();}}
               disabled={isLoading || isScanning || isPerformingBacktest || isPerformingMultiBacktest}
               className="px-3 py-2 sm:px-4 bg-teal-600 hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-800 text-white font-semibold rounded-lg shadow-md transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1 sm:space-x-2 hover:scale-105 hover:brightness-110 transform"
-              title={`Executar Backtest SMC M15 de ${BACKTEST_PERIOD_DAYS} Dias para Todos os Ativos (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
+              title={`Executar Backtest SMC M5 de ${BACKTEST_PERIOD_DAYS} Dias para Todos os Ativos (RR 1:${SMC_STRATEGY_MIN_RR_RATIO})`}
             >
               <ListBulletIcon className={`w-5 h-5 ${isPerformingMultiBacktest ? 'animate-pulse' : ''}`} />
-              <span className="hidden sm:inline">{isPerformingMultiBacktest ? 'Testando Todos...' : `BT Todos SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
-              <span className="sm:hidden text-xs">{isPerformingMultiBacktest ? '...' : `BT Todos SMC M15 (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="hidden sm:inline">{isPerformingMultiBacktest ? 'Testando Todos...' : `BT Todos SMC M5 (${BACKTEST_PERIOD_DAYS}d)`}</span>
+              <span className="sm:hidden text-xs">{isPerformingMultiBacktest ? '...' : `BT Todos SMC M5 (${BACKTEST_PERIOD_DAYS}d)`}</span>
             </button>
             <button
               onClick={toggleDarkMode}
@@ -1008,17 +1045,17 @@ const App: React.FC = () => {
         <div className="flex-grow bg-surface-light dark:bg-surface-dark p-1 sm:p-2 rounded-lg shadow-xl dark:shadow-black/30 border border-gray-300 dark:border-gray-600 overflow-y-auto max-h-[calc(100vh-160px)] lg:max-h-[calc(100vh-120px)]">
           {(isLoading && !analysisReport && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest) && (
             <div className="flex flex-col items-center justify-center h-full">
-              <LoadingSpinner size="lg" text={`Analisando ${getSelectedAsset()?.name || 'ativo'} (SMC M15)...`} />
+              <LoadingSpinner size="lg" text={`Analisando ${getSelectedAsset()?.name || 'ativo'} (SMC M5)...`} />
             </div>
           )}
           {isPerformingBacktest && !analysisReport?.strategyBacktestResult && (
               <div className="flex flex-col items-center justify-center h-full">
-              <LoadingSpinner size="lg" text={`Executando backtest SMC M15 de ${BACKTEST_PERIOD_DAYS} dias para ${getSelectedAsset()?.name || 'ativo'}...`} />
+              <LoadingSpinner size="lg" text={`Executando backtest SMC M5 de ${BACKTEST_PERIOD_DAYS} dias para ${getSelectedAsset()?.name || 'ativo'}...`} />
             </div>
           )}
           {(isScanning || isPerformingMultiBacktest) && !analysisReport && (
               <div className="flex flex-col items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4">
-                <LoadingSpinner size="lg" text={isScanning ? "Varredura SMC M15 em progresso..." : "Backtest SMC M15 de múltiplos ativos em progresso..."} />
+                <LoadingSpinner size="lg" text={isScanning ? "Varredura SMC M5 em progresso..." : "Backtest SMC M5 de múltiplos ativos em progresso..."} />
                 <p className="mt-2 text-sm">A análise do ativo com sinal (ou primeiro ativo do multi-backtest) aparecerá aqui.</p>
               </div>
           )}
@@ -1036,14 +1073,14 @@ const App: React.FC = () => {
             />
           )}
           {!isLoading && !isScanning && !isPerformingBacktest && !isPerformingMultiBacktest && !error && !analysisReport && (
-            <div className="flex items-center justify-center h-full text-text_secondary-light dark:text-text_secondary-dark p-4 text-center">
-              <p>O relatório de análise SMC (M15) aparecerá aqui. Selecione um ativo e clique em "Analisar SMC (M15)", "Scan All SMC (M15)" ou um dos botões de "Backtest SMC M15".</p>
+            <div className="flex items-center justify-center h-full text-text_secondary-light dark:text_text_secondary-dark p-4 text-center">
+              <p>O relatório de análise SMC (M5) aparecerá aqui. Selecione um ativo e clique em "Analisar SMC (M5)", "Scan All SMC (M5)" ou um dos botões de "Backtest SMC M5".</p>
             </div>
           )}
         </div>
       </main>
       <footer className="text-center p-3 text-xs text-text_secondary-light dark:text_text_secondary-dark border-t border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark">
-        Fiscal Cripto SMC (M15) | Aviso: Apenas para fins educacionais. Não é aconselhamento financeiro.
+        Fiscal Cripto SMC (M5) | Aviso: Apenas para fins educacionais. Não é aconselhamento financeiro.
       </footer>
     </div>
   );

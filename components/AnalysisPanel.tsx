@@ -209,7 +209,7 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ report, isLoading, isScan
 
   return (
     <div className="bg-surface-light dark:bg-surface-dark p-2 sm:p-4 space-y-4 h-full overflow-y-auto text-text_primary-light dark:text-text_primary-dark rounded-lg shadow-xl dark:shadow-black/25 border border-gray-300 dark:border-gray-600">
-      <h2 className="text-xl sm:text-2xl font-bold text-center text-primary dark:text-primary-light mb-3">Análise SMC/ICT para {asset} (M15)</h2>
+      <h2 className="text-xl sm:text-2xl font-bold text-center text-primary dark:text-primary-light mb-3">Análise SMC/ICT para {asset} (M5)</h2>
 
       <Section title="Sinal da Estratégia SMC" className="!bg-opacity-50 dark:!bg-opacity-50">
         <div className={`p-3 rounded-md text-center font-semibold text-lg ${signalBgColor} ${signalTextColor}`}>

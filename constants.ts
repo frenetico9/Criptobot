@@ -1,8 +1,8 @@
 
 import { Asset, AssetType } from './types';
 
-// Timeframe M15
-export const CANDLE_DURATION_MINUTES = 15;
+// Timeframe M5
+export const CANDLE_DURATION_MINUTES = 5;
 
 // General Trend Context (EMA-based) - Kept for context, not primary signal
 export const EMA_TREND_PERIOD = 50; 
@@ -48,16 +48,16 @@ export const PATTERN_BEARISH_ENGULFING = -100;
 export const PATTERN_HAMMER = 150;
 export const PATTERN_SHOOTING_STAR = -150;
 
-// Data fetching and display - Adjusted for M15 if needed
-export const NUM_CANDLES_TO_FETCH = 300; // For M15: 300*15 = 4500 mins (~3.1 days) - Sufficient for M15 context
-export const NUM_CANDLES_TO_DISPLAY = 150; // For M15: 150*15 = 2250 mins (~1.5 days)
+// Data fetching and display - Adjusted for M5 if needed
+export const NUM_CANDLES_TO_FETCH = 300; // For M5: 300*5 = 1500 mins (~1 day) - Check if sufficient for M5 context
+export const NUM_CANDLES_TO_DISPLAY = 150; // For M5: 150*5 = 750 mins (~0.5 day)
 
 // Volume Context
 export const VOLUME_SPIKE_RATIO = 1.8; 
 
 // Backtest Settings
 export const BACKTEST_PERIOD_DAYS = 30; 
-export const BACKTEST_CANDLES_PER_DAY = (24 * 60) / CANDLE_DURATION_MINUTES; // Now uses M15
+export const BACKTEST_CANDLES_PER_DAY = (24 * 60) / CANDLE_DURATION_MINUTES; // Now uses M5
 export const BACKTEST_TOTAL_CANDLES_FOR_PERIOD = BACKTEST_PERIOD_DAYS * BACKTEST_CANDLES_PER_DAY;
 export const BACKTEST_INDICATOR_BUFFER_CANDLES = Math.max(EMA_TREND_PERIOD, SMC_MARKET_STRUCTURE_LOOKBACK, ATR_PERIOD) + SMC_IDM_LOOKBACK + 50; 
 export const NUM_CANDLES_TO_FETCH_FOR_FULL_BACKTEST = BACKTEST_TOTAL_CANDLES_FOR_PERIOD + BACKTEST_INDICATOR_BUFFER_CANDLES;
@@ -66,6 +66,7 @@ export const BINANCE_MAX_KLINE_LIMIT_PER_REQUEST = 1000;
 // Capital Simulation for Backtest
 export const BACKTEST_INITIAL_CAPITAL_BRL = 1000; 
 export const BACKTEST_RISK_PER_TRADE_BRL = 25; 
+export const CONSECUTIVE_BUY_LOSS_SL_THRESHOLD = 3; // Avoid N+ consecutive BUY/LOSS/SL_HIT trades
 
 // General Liquidity Windows (UTC)
 export const GENERAL_LIQUIDITY_WINDOW_EUROPE_US_UTC_START = 12;

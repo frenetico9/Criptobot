@@ -119,7 +119,7 @@ export const MASTER_ASSET_LIST: Asset[] = [
     { id: 'XTZ-USD', name: 'Tezos (XTZ/USD)', type: AssetType.CRYPTO },
     { id: 'SAND-USD', name: 'The Sandbox (SAND/USD)', type: AssetType.CRYPTO }, // Kept by user
 
-    // Additional Memecoins (9 new ones, SHIB already included above)
+    // Additional Memecoins (7 new ones, SHIB already included above)
     { id: 'PEPE-USD', name: 'Pepe (PEPE/USD)', type: AssetType.CRYPTO },
     { id: 'WIF-USD', name: 'dogwifhat (WIF/USD)', type: AssetType.CRYPTO },
     { id: 'BONK-USD', name: 'Bonk (BONK/USD)', type: AssetType.CRYPTO },
@@ -127,8 +127,6 @@ export const MASTER_ASSET_LIST: Asset[] = [
     { id: 'MEME-USD', name: 'Memecoin (MEME/USD)', type: AssetType.CRYPTO },
     { id: 'BOME-USD', name: 'Book of Meme (BOME/USD)', type: AssetType.CRYPTO },
     { id: 'TURBO-USD', name: 'Turbo (TURBO/USD)', type: AssetType.CRYPTO },
-    { id: 'COQ-USD', name: 'Coq Inu (COQ/USD)', type: AssetType.CRYPTO },
-    { id: 'MYRO-USD', name: 'Myro (MYRO/USD)', type: AssetType.CRYPTO },
 ];
 
 export const DEFAULT_ASSET_ID = 'BTC-USD';
